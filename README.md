@@ -138,13 +138,28 @@ Content-Type: application/json
 
 ### Error Responses
 
-- **400 Bad Request**: When `query` is empty or whitespace.
-- **422 Unprocessable Entity**: When request payload does not conform to schema.
-- **500 Internal Server Error**: Graceful error response with JSON diagnostic output.
+- **422 Unprocessable Entity**: When request payload is empty, whitespace-only, contains no alphabetic characters, or does not conform to schema.
+- **413 Request Entity Too Large**: When request body exceeds the 64 KB security limit.
+- **500 Internal Server Error**: Sanitized error response returning a unique `request_id` without exposing internal stack traces or implementation details.
 
 ---
 
-## 4. Entity Resolution & Duplicate Detection
+## 4. Security & Production Hardening
+
+This application incorporates enterprise-grade security and reliability patterns designed to address common vulnerabilities:
+
+| Category | Security Measure | Implementation Details |
+|---|---|---|
+| **CORS Protection** | Restricted Origin Allowlist | CORS is strictly bound to explicit origins configured via `CORS_ORIGINS` (defaulting to localhost). `allow_credentials` is set to `False` to prevent credential-stuffing and cross-site request forgery. Wildcard (`*`) with credentials is explicitly prohibited. |
+| **Information Disclosure** | Error Sanitization | Stack traces, raw system exceptions, and file paths are never returned to API callers. Errors return a generic safe message and a unique `request_id` (`X-Request-ID` header) that correlates with secure server-side logs. |
+| **DoS Prevention** | Request Size Bounding | `BodySizeLimitMiddleware` strictly caps incoming request payload sizes at 64 KB, protecting memory and event loops against payload exhaustion attacks. |
+| **Input Sanitization** | Strict Pydantic v2 Validation | `ProspectQueryRequest` enforces length constraints (3–500 chars), collapses whitespace, and rejects queries lacking alphabetic characters. |
+| **Secret Management** | Safe Logging & Storage | API keys are loaded via Pydantic Settings from `.env`. Zero secrets or authorization headers are ever logged or included in outbound error responses. |
+| **Anti-Fabrication** | Strict Contact Validation | Emails are RFC-checked and verified against known bogus/placeholder domains (`example.com`, `test.com`, etc.). Phones are validated against ITU-T E.164 standards. Only publicly accessible contacts from search snippets and pages are included. |
+
+---
+
+## 5. Entity Resolution & Duplicate Detection
 
 Prospects often have identities across multiple platforms. Our engine consolidates these without merging distinct individuals with similar names.
 
@@ -161,7 +176,7 @@ Prospects often have identities across multiple platforms. Our engine consolidat
 
 ---
 
-## 5. Relevance Scoring Algorithm
+## 6. Relevance Scoring Algorithm
 
 To avoid polluting results with generic or irrelevant search hits, each candidate is evaluated against a 100-point weighted rubric:
 
@@ -176,7 +191,7 @@ Candidates scoring below the configurable `RELEVANCE_THRESHOLD` (default: `40`) 
 
 ---
 
-## 6. LLM Model Research – Cost, Speed, and Accuracy
+## 7. LLM Model Research – Cost, Speed, and Accuracy
 
 As required by Section 8 of the assessment, we conducted comprehensive research comparing three major LLM providers for query understanding and structured JSON extraction.
 
@@ -215,7 +230,7 @@ $$\text{Cost}_{\text{GPT-4o-mini}} = \left(\frac{278}{1,000,000} \times \$0.150\
 
 ---
 
-## 7. Practical Test Cases Evaluation
+## 8. Practical Test Cases Evaluation
 
 The application was verified against all 5 mandatory assessment queries:
 
@@ -229,7 +244,7 @@ The application was verified against all 5 mandatory assessment queries:
 
 ---
 
-## 8. Installation & Setup
+## 9. Installation & Setup
 
 ### Prerequisites
 - Python 3.10+ (tested on Python 3.10, 3.11, 3.12, and 3.14)
@@ -266,6 +281,7 @@ Edit `.env` to configure your preferred search and LLM keys:
 ```env
 PORT=4000
 HOST=0.0.0.0
+CORS_ORIGINS=http://localhost:4000,http://127.0.0.1:4000
 
 # Search Provider (Serper, Brave, or auto-fallback to DuckDuckGo)
 SEARCH_PROVIDER=auto
@@ -279,7 +295,7 @@ GEMINI_API_KEY=your_key_here
 
 ---
 
-## 9. Running the Application
+## 10. Running the Application
 
 ### Start FastAPI Server
 ```bash
@@ -288,6 +304,7 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 4000 --reload
 
 The server will start at:
 - **API Root**: [http://localhost:4000](http://localhost:4000)
+- **Health Check**: [http://localhost:4000/health](http://localhost:4000/health)
 - **API Documentation (Swagger UI)**: [http://localhost:4000/docs](http://localhost:4000/docs)
 - **Prospect Discovery Endpoint**: `POST http://localhost:4000/prospect-discovery`
 
@@ -300,27 +317,32 @@ curl -X POST "http://localhost:4000/prospect-discovery" \
 
 ---
 
-## 10. Automated Testing
+## 11. Automated Testing
 
-Run the test suite with Pytest:
+The project includes a comprehensive test suite of **91 automated unit and integration tests** across 10 test categories:
 
 ```bash
 pytest tests/ -v
 ```
 
-All 8 comprehensive tests cover:
-- Root health check
-- Natural language query understanding for all 5 mandatory queries
-- URL and disallowed path validators
-- Title and handle normalizers
-- Profile deduplication and consolidation
-- Weighted relevance scoring
-- API validation and error handling
-- End-to-end API response contract validation
+### Test Coverage Highlights (91/91 Passing)
+
+| Test Category | Scope & Invariants Tested |
+|---|---|
+| **Health & Probes** | Root status, `/health` liveness probe, `X-Request-ID` header generation and UUID uniqueness |
+| **Input Validation** | Empty queries, whitespace-only, numeric/non-alphabetic queries, min/max length checks, malformed JSON bodies |
+| **Query Understanding** | All 5 mandatory assessment queries accurately resolved, intent caching & cache hit verification, formatted location parsing |
+| **Platform Validators** | Public profile URL patterns for 9 platforms, rejection of post/reel/story/hashtag/job URLs, RFC email validation with anti-bogus rules, ITU-T phone verification, tracking query param stripping |
+| **Normalizers** | Platform title stripping (cleaning LinkedIn titles, YouTube suffixes, etc.), username handle extraction across platforms |
+| **Relevance Scoring** | 100-point rubric breakdown, high vs. low candidate classification, query without location full credit rule |
+| **Entity Deduplication** | URL exact match, shared email match, shared handle + compatible location match, multi-word name + location match, refusal to merge different persons, platform ordering of consolidated links |
+| **API Contract** | Shape of `ProspectDiscoveryResponse`, total count consistency, header propagation, zero internal stack trace leakage on error |
+| **Platform Resilience** | Graceful partial degradation (single platform failure does not crash pipeline), all-platforms-failing zero-hit fallback |
+| **End-to-End Pipeline** | Full mocked discovery pipeline testing all 5 mandatory practical test queries |
 
 ---
 
-## 11. Deployment
+## 12. Deployment
 
 ### Using Docker
 
@@ -341,7 +363,7 @@ docker run -d -p 4000:4000 --env-file .env ai-prospect-discovery
 
 ---
 
-## 12. Verification & Submission Checklist
+## 13. Verification & Submission Checklist
 
 - [x] **FastAPI Endpoint**: Running on port `4000` at `POST /prospect-discovery`.
 - [x] **Supported Platforms**: Google, LinkedIn, X, YouTube, Instagram, WhatsApp, Facebook, Email, Threads.

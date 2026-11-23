@@ -1,9 +1,17 @@
+"""LinkedIn public profile adapter."""
 from app.platforms.base import BasePlatformAdapter
 from app.schemas import StructuredIntent
 
+
 class LinkedInAdapter(BasePlatformAdapter):
-    platform_name: str = "LinkedIn"
+    platform_name = "LinkedIn"
 
     def build_query(self, intent: StructuredIntent) -> str:
-        loc = f'"{intent.location.city}"' if intent.location.city else (f'"{intent.location.country}"' if intent.location.country else "")
-        return f'site:linkedin.com/in/ "{intent.audience}" {loc}'.strip()
+        loc = ""
+        if intent.location.city:
+            loc = f'"{intent.location.city}"'
+        elif intent.location.country:
+            loc = f'"{intent.location.country}"'
+
+        audience = f'"{intent.audience}"'
+        return f"site:linkedin.com/in/ {audience} {loc}".strip()

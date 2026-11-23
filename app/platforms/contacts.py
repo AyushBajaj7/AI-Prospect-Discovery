@@ -1,63 +1,89 @@
+"""
+Contact extractor – finds publicly published email addresses, phone numbers,
+and WhatsApp links inside free-text snippets and titles.
+
+Only publicly visible information is extracted; nothing is guessed or generated.
+"""
+from __future__ import annotations
+
 import re
-from typing import List, Dict, Set
+from typing import Dict, List
+
 from app.utils.validators import is_valid_email, is_valid_phone
 
-# Email pattern matching in text snippets
-SNIPPET_EMAIL_REGEX = re.compile(
-    r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+",
-    re.IGNORECASE
+# ---------------------------------------------------------------------------
+# Compiled patterns
+# ---------------------------------------------------------------------------
+
+_EMAIL_RE = re.compile(
+    r"[a-zA-Z0-9_.+\-]{1,64}@[a-zA-Z0-9\-]{1,63}\.[a-zA-Z]{2,}",
+    re.IGNORECASE,
 )
 
-# Phone pattern matching in text snippets
-SNIPPET_PHONE_REGEX = re.compile(
-    r"(?:\+?\d{1,3}[\s-]?)?\(?\d{2,4}\)?[\s.-]?\d{3,4}[\s.-]?\d{3,5}",
-    re.IGNORECASE
+# Conservative phone pattern – requires at least 7 digits; avoids matching
+# things like years (2023) or pure decimals.
+_PHONE_RE = re.compile(
+    r"(?<!\d)(\+?[0-9]{1,3}[\s.\-]?)?(\(?[0-9]{2,4}\)?[\s.\-]?){1,3}[0-9]{3,5}(?!\d)",
 )
 
-# WhatsApp links in text or urls
-WHATSAPP_LINK_REGEX = re.compile(
-    r"https?://(?:wa\.me/\+?\d+|api\.whatsapp\.com/send\?phone=\d+|chat\.whatsapp\.com/[a-zA-Z0-9]+)",
-    re.IGNORECASE
+_WHATSAPP_RE = re.compile(
+    r"https?://(wa\.me/\+?[0-9]{7,15}|api\.whatsapp\.com/send\?phone=[0-9]{7,15}"
+    r"|chat\.whatsapp\.com/[A-Za-z0-9]{10,})",
+    re.IGNORECASE,
 )
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 def extract_emails(text: str) -> List[str]:
-    """Finds all valid public email addresses in text."""
+    """Return a deduplicated list of valid public email addresses found in text."""
     if not text:
         return []
-    matches = SNIPPET_EMAIL_REGEX.findall(text)
-    valid_emails: Set[str] = set()
-    for m in matches:
-        cleaned = m.strip(".,;:()[]{}'\"")
-        if is_valid_email(cleaned):
-            valid_emails.add(cleaned.lower())
-    return sorted(list(valid_emails))
+    seen: set[str] = set()
+    result: List[str] = []
+    for match in _EMAIL_RE.finditer(text):
+        email = match.group(0).strip(".,;:'\"")
+        email_lower = email.lower()
+        if email_lower not in seen and is_valid_email(email_lower):
+            seen.add(email_lower)
+            result.append(email_lower)
+    return result
+
 
 def extract_phones(text: str) -> List[str]:
-    """Finds all plausible public phone numbers in text."""
+    """Return a deduplicated list of plausible public phone numbers found in text."""
     if not text:
         return []
-    matches = SNIPPET_PHONE_REGEX.findall(text)
-    valid_phones: Set[str] = set()
-    for m in matches:
-        cleaned = m.strip(".,;:()[]{}'\"")
-        if is_valid_phone(cleaned):
-            valid_phones.add(cleaned)
-    return sorted(list(valid_phones))
+    seen: set[str] = set()
+    result: List[str] = []
+    for match in _PHONE_RE.finditer(text):
+        phone = match.group(0).strip(".,;:'\" ")
+        if phone not in seen and is_valid_phone(phone):
+            seen.add(phone)
+            result.append(phone)
+    return result
+
 
 def extract_whatsapp_links(text: str) -> List[str]:
-    """Finds all publicly published WhatsApp links in text."""
+    """Return a deduplicated list of public WhatsApp links found in text."""
     if not text:
         return []
-    matches = WHATSAPP_LINK_REGEX.findall(text)
-    valid_links: Set[str] = set()
-    for m in matches:
-        cleaned = m.strip(".,;:()[]{}'\"")
-        valid_links.add(cleaned)
-    return sorted(list(valid_links))
+    seen: set[str] = set()
+    result: List[str] = []
+    for match in _WHATSAPP_RE.finditer(text):
+        link = match.group(0).strip(".,;:'\" ")
+        if link not in seen:
+            seen.add(link)
+            result.append(link)
+    return result
+
 
 def extract_all_contacts(text: str) -> Dict[str, List[str]]:
+    """Convenience wrapper – returns all three contact categories at once."""
     return {
         "emails": extract_emails(text),
         "phones": extract_phones(text),
-        "whatsapp_links": extract_whatsapp_links(text)
+        "whatsapp_links": extract_whatsapp_links(text),
     }

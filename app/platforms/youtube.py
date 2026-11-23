@@ -1,10 +1,20 @@
+"""YouTube public channel / creator adapter."""
 from app.platforms.base import BasePlatformAdapter
 from app.schemas import StructuredIntent
 
+
 class YouTubeAdapter(BasePlatformAdapter):
-    platform_name: str = "YouTube"
+    platform_name = "YouTube"
 
     def build_query(self, intent: StructuredIntent) -> str:
-        loc = f'"{intent.location.city}"' if intent.location.city else (f'"{intent.location.country}"' if intent.location.country else "")
-        topic = intent.interest if intent.interest else intent.audience
-        return f'site:youtube.com/@ OR site:youtube.com/channel/ "{topic}" {loc}'.strip()
+        loc = ""
+        if intent.location.city:
+            loc = f'"{intent.location.city}"'
+        elif intent.location.country:
+            loc = f'"{intent.location.country}"'
+
+        topic = intent.interest or intent.audience
+        return (
+            f'site:youtube.com "{topic}" {loc} '
+            f"-inurl:/watch -inurl:/playlist -inurl:/shorts"
+        ).strip()

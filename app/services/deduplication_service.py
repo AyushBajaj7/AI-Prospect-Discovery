@@ -1,116 +1,165 @@
+"""
+Deduplication service – consolidates multi-platform candidate profiles that
+belong to the same real-world individual or business into a single Prospect.
+
+Matching priority (from most to least reliable):
+  1. Exact profile URL (normalized)
+  2. Shared public email address
+  3. Shared public phone number
+  4. Shared platform handle (username) with compatible location
+  5. Identical normalized full name with compatible location
+
+Rule: never merge two candidates based on a single common given name alone.
+"""
+from __future__ import annotations
+
 import logging
 import re
-from typing import List, Dict, Set, Optional
-from app.schemas import RawCandidate, Prospect, SocialLink
+from typing import Dict, List, Optional, Set
+
+from app.schemas import Prospect, RawCandidate, SocialLink
 
 logger = logging.getLogger(__name__)
 
+# Handles that are too generic to reliably identify a person
+_GENERIC_HANDLES: Set[str] = {
+    "profile", "official", "page", "user", "admin", "info",
+    "contact", "support", "help", "news", "home", "about",
+}
+
+
 class DeduplicationService:
-    """Consolidates multi-platform candidate profiles belonging to the same entity/individual."""
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
 
     def _normalize_name(self, name: str) -> str:
-        """Lowers and strips punctuation for comparison."""
+        """Lowercase, strip non-alphanumeric chars, collapse whitespace."""
         cleaned = re.sub(r"[^\w\s]", "", name.lower())
         return " ".join(cleaned.split())
 
-    def _are_locations_compatible(self, loc1: Optional[str], loc2: Optional[str]) -> bool:
-        """Checks if two locations are either identical or one contains the other."""
+    @staticmethod
+    def _locations_compatible(loc1: Optional[str], loc2: Optional[str]) -> bool:
+        """
+        Return True when locations are not contradictory.
+
+        Missing location is treated as "compatible with anything."
+        """
         if not loc1 or not loc2:
-            return True  # Location missing on one doesn't forbid match if other strong signals exist
-        l1, l2 = loc1.lower(), loc2.lower()
-        return l1 in l2 or l2 in l1
+            return True
+        a, b = loc1.lower(), loc2.lower()
+        return a in b or b in a
 
     def _should_merge(self, a: RawCandidate, b: RawCandidate) -> bool:
-        """Evaluates whether candidate A and candidate B represent the same individual."""
-        # 1. Exact URL match
+        # 1. Exact URL
         if a.profile_url.lower() == b.profile_url.lower():
             return True
 
-        # 2. Shared Contact Evidence (Email or Phone)
-        if a.emails and b.emails:
-            if set(e.lower() for e in a.emails).intersection(set(e.lower() for e in b.emails)):
-                return True
+        # 2. Shared email
+        emails_a = {e.lower() for e in a.emails}
+        emails_b = {e.lower() for e in b.emails}
+        if emails_a and emails_b and emails_a & emails_b:
+            return True
 
-        if a.phones and b.phones:
-            if set(a.phones).intersection(set(b.phones)):
-                return True
+        # 3. Shared phone
+        phones_a = set(a.phones)
+        phones_b = set(b.phones)
+        if phones_a and phones_b and phones_a & phones_b:
+            return True
 
-        # 3. Shared Social Handle across known platforms
-        handle_a = a.metadata.get("handle")
-        handle_b = b.metadata.get("handle")
-        if handle_a and handle_b and len(handle_a) >= 3:
-            # Avoid generic handles like "pages", "home", "channel"
-            if handle_a == handle_b and handle_a not in ["profile", "official", "page", "user"]:
-                # If handles match, ensure locations aren't completely contradictory
-                if self._are_locations_compatible(a.location, b.location):
-                    return True
+        # 4. Same platform handle (must be non-trivial and locations compatible)
+        handle_a = (a.metadata.get("handle") or "").lower()
+        handle_b = (b.metadata.get("handle") or "").lower()
+        if (
+            handle_a
+            and handle_b
+            and handle_a == handle_b
+            and len(handle_a) >= 4
+            and handle_a not in _GENERIC_HANDLES
+            and self._locations_compatible(a.location, b.location)
+        ):
+            return True
 
-        # 4. Normalized Full Name Match + Location Match
+        # 5. Exact full-name + compatible location (multi-word names only)
         norm_a = self._normalize_name(a.name)
         norm_b = self._normalize_name(b.name)
-        if norm_a and norm_b and norm_a == norm_b:
-            words = norm_a.split()
-            # Only match by name if multi-word name (avoid single common names like "John")
-            if len(words) >= 2:
-                # Require compatible locations or identical platform/context
-                if a.location and b.location:
-                    if self._are_locations_compatible(a.location, b.location):
-                        return True
-                elif not a.location and not b.location:
-                    return True
+        if (
+            norm_a
+            and norm_b
+            and norm_a == norm_b
+            and len(norm_a.split()) >= 2
+            and self._locations_compatible(a.location, b.location)
+        ):
+            return True
 
         return False
 
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
     def consolidate(self, candidates: List[RawCandidate]) -> List[Prospect]:
-        """Groups matching candidates and produces unified Prospect records."""
+        """
+        Cluster candidates into identity groups, then produce one Prospect
+        per cluster with merged social links.
+        """
         if not candidates:
             return []
 
         clusters: List[List[RawCandidate]] = []
 
         for cand in candidates:
-            matched_cluster = None
+            merged = False
             for cluster in clusters:
                 if any(self._should_merge(existing, cand) for existing in cluster):
-                    matched_cluster = cluster
+                    cluster.append(cand)
+                    merged = True
                     break
-
-            if matched_cluster is not None:
-                matched_cluster.append(cand)
-            else:
+            if not merged:
                 clusters.append([cand])
 
         prospects: List[Prospect] = []
         for cluster in clusters:
-            # Best representative name: multi-word or cleanest
-            primary_name = cluster[0].name
-            for item in cluster:
-                if len(item.name.split()) > len(primary_name.split()):
-                    primary_name = item.name
+            # Pick the most descriptive name (most words, then longest)
+            primary_name = max(
+                cluster,
+                key=lambda c: (len(c.name.split()), len(c.name)),
+            ).name
 
-            # Best location: most specific (longest)
+            # Pick the most specific (longest) location
             locations = [c.location for c in cluster if c.location]
             best_location = max(locations, key=len) if locations else None
 
-            # Consolidate social links without duplicates
-            consolidated_links: List[SocialLink] = []
-            seen_urls: Set[str] = set()
+            # Merge social links without duplicates (normalise URL case)
+            merged_links: List[SocialLink] = []
+            seen_links: Set[str] = set()
+            # Sort so social-platform links come before email/phone/WhatsApp
+            _PLATFORM_ORDER = {
+                "LinkedIn": 0, "X": 1, "YouTube": 2, "Instagram": 3,
+                "Facebook": 4, "Threads": 5, "Google": 6,
+                "WhatsApp": 7, "Email": 8, "Phone": 9,
+            }
+            all_links = [sl for cand in cluster for sl in cand.social_links]
+            all_links.sort(key=lambda sl: _PLATFORM_ORDER.get(sl.platform, 99))
 
-            for item in cluster:
-                for sl in item.social_links:
-                    url_norm = sl.link.lower().strip()
-                    if url_norm not in seen_urls:
-                        seen_urls.add(url_norm)
-                        consolidated_links.append(sl)
+            for sl in all_links:
+                key = sl.link.lower().strip()
+                if key not in seen_links:
+                    seen_links.add(key)
+                    merged_links.append(sl)
 
             prospects.append(
                 Prospect(
                     name=primary_name,
                     location=best_location,
-                    social_link=consolidated_links
+                    social_link=merged_links,
                 )
             )
 
+        # Sort prospects by number of social links descending (richer first)
+        prospects.sort(key=lambda p: len(p.social_link), reverse=True)
         return prospects
+
 
 deduplication_service = DeduplicationService()

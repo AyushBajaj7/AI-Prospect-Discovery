@@ -1,51 +1,79 @@
-import re
+"""
+WhatsApp public contact-link adapter.
+
+Discovers publicly published wa.me links associated with individuals or
+businesses that match the query. No private data is accessed.
+"""
+from __future__ import annotations
+
+import logging
 from typing import List
+
 from app.platforms.base import BasePlatformAdapter
-from app.schemas import StructuredIntent, RawCandidate, SocialLink
-from app.utils.normalizers import clean_name
-from app.services.search_service import search_service
 from app.platforms.contacts import extract_all_contacts
+from app.schemas import RawCandidate, SocialLink, StructuredIntent
+from app.services.search_service import search_service
+from app.utils.normalizers import clean_name, normalize_location
+
+logger = logging.getLogger(__name__)
+
 
 class WhatsAppAdapter(BasePlatformAdapter):
-    platform_name: str = "WhatsApp"
+    platform_name = "WhatsApp"
 
     def build_query(self, intent: StructuredIntent) -> str:
-        loc = f'"{intent.location.city}"' if intent.location.city else (f'"{intent.location.country}"' if intent.location.country else "")
-        return f'"{intent.audience}" {loc} ("wa.me" OR "api.whatsapp.com")'.strip()
+        loc = ""
+        if intent.location.city:
+            loc = f'"{intent.location.city}"'
+        elif intent.location.country:
+            loc = f'"{intent.location.country}"'
+
+        audience = f'"{intent.audience}"'
+        return f'{audience} {loc} ("wa.me" OR "api.whatsapp.com/send")'.strip()
 
     def validate_url(self, url: str) -> bool:
-        return "wa.me" in url or "api.whatsapp.com" in url or "chat.whatsapp.com" in url
+        return bool(url) and (
+            "wa.me/" in url.lower()
+            or "api.whatsapp.com/send" in url.lower()
+            or "chat.whatsapp.com/" in url.lower()
+        )
 
-    async def discover(self, intent: StructuredIntent, max_results: int = 5) -> List[RawCandidate]:
-        """Discovers WhatsApp contact links mentioned in search results."""
+    async def discover(
+        self, intent: StructuredIntent, max_results: int = 5
+    ) -> List[RawCandidate]:
         query = self.build_query(intent)
         try:
-            results = await search_service.search(query, num_results=max_results)
-        except Exception:
+            hits = await search_service.search(query, num_results=max_results)
+        except Exception as exc:
+            logger.warning("WhatsApp search error: %s", type(exc).__name__)
             return []
 
         candidates: List[RawCandidate] = []
-        for item in results:
-            title = item.get("title", "")
-            snippet = item.get("snippet", "")
-            link = item.get("link", "")
-            combined = f"{title} {snippet} {link}"
+
+        for hit in hits:
+            title = hit.get("title", "")
+            snippet = hit.get("snippet", "")
+            page_url = hit.get("link", "")
+            combined = f"{title} {snippet} {page_url}"
+
             contacts = extract_all_contacts(combined)
-            
-            # If the search result URL itself is a wa.me link or if snippet contains a wa.me link
-            wa_links = contacts.get("whatsapp_links", [])
-            if self.validate_url(link) and link not in wa_links:
-                wa_links.append(link)
+            wa_links = contacts["whatsapp_links"]
+
+            # Also check if the result URL itself is a wa.me link
+            if self.validate_url(page_url) and page_url not in wa_links:
+                wa_links.append(page_url)
 
             if not wa_links:
                 continue
 
             name = clean_name(title, self.platform_name)
-            if not name or len(name) < 2:
+            if not name:
                 continue
 
-            location = self.extract_location(combined, intent)
-            social_links = [SocialLink(platform="WhatsApp", link=w) for w in wa_links]
+            location = self._infer_location(combined, intent)
+            social_links: List[SocialLink] = [
+                SocialLink(platform="WhatsApp", link=wa) for wa in wa_links
+            ]
             for email in contacts["emails"]:
                 social_links.append(SocialLink(platform="Email", link=f"mailto:{email}"))
             for phone in contacts["phones"]:
@@ -62,7 +90,7 @@ class WhatsAppAdapter(BasePlatformAdapter):
                     emails=contacts["emails"],
                     phones=contacts["phones"],
                     whatsapp_links=wa_links,
-                    social_links=social_links
+                    social_links=social_links,
                 )
             )
 

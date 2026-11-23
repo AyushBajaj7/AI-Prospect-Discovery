@@ -1,9 +1,20 @@
+"""Instagram public profile adapter."""
 from app.platforms.base import BasePlatformAdapter
 from app.schemas import StructuredIntent
 
+
 class InstagramAdapter(BasePlatformAdapter):
-    platform_name: str = "Instagram"
+    platform_name = "Instagram"
 
     def build_query(self, intent: StructuredIntent) -> str:
-        loc = f'"{intent.location.city}"' if intent.location.city else (f'"{intent.location.country}"' if intent.location.country else "")
-        return f'site:instagram.com "{intent.audience}" {loc} -inurl:/p/ -inurl:/reel/ -inurl:/stories/'.strip()
+        loc = ""
+        if intent.location.city:
+            loc = f'"{intent.location.city}"'
+        elif intent.location.country:
+            loc = f'"{intent.location.country}"'
+
+        audience = f'"{intent.audience}"'
+        return (
+            f"site:instagram.com {audience} {loc} "
+            f"-inurl:/p/ -inurl:/reel/ -inurl:/stories/ -inurl:/explore/"
+        ).strip()

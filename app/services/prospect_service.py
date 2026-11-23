@@ -1,73 +1,110 @@
+"""
+Prospect service – orchestrates the full discovery pipeline:
+
+  1. Query understanding (LLM / heuristic)
+  2. Concurrent multi-platform discovery
+  3. Profile enrichment
+  4. Relevance scoring & filtering
+  5. Deduplication & entity consolidation
+  6. Structured JSON response
+"""
+from __future__ import annotations
+
 import asyncio
 import logging
 from typing import List
-from app.schemas import (
-    ProspectQueryRequest,
-    ProspectDiscoveryResponse,
-    Prospect,
-    RawCandidate,
-    StructuredIntent
-)
-from app.services.query_service import query_service
-from app.platforms import ALL_PLATFORMS
-from app.services.profile_extractor import profile_extractor
-from app.services.relevance_service import relevance_service
-from app.services.deduplication_service import deduplication_service
+
 from app.config import settings
+from app.platforms import ALL_PLATFORMS
+from app.schemas import (
+    Prospect,
+    ProspectDiscoveryResponse,
+    ProspectQueryRequest,
+    RawCandidate,
+    StructuredIntent,
+)
+from app.services.deduplication_service import deduplication_service
+from app.services.profile_extractor import profile_extractor
+from app.services.query_service import query_service
+from app.services.relevance_service import relevance_service
 
 logger = logging.getLogger(__name__)
 
+
 class ProspectService:
-    async def discover_prospects(self, request: ProspectQueryRequest) -> ProspectDiscoveryResponse:
+
+    async def discover_prospects(
+        self, request: ProspectQueryRequest
+    ) -> ProspectDiscoveryResponse:
         query = request.query.strip()
-        logger.info(f"Starting prospect discovery for query: '{query}'")
+        logger.info("Discovery started: query=%r", query)
 
-        # 1. Natural Language Query Understanding
+        # --- Step 1: Understand the query ---
         intent: StructuredIntent = await query_service.get_structured_intent(query)
-        logger.info(f"Parsed intent: audience='{intent.audience}', interest='{intent.interest}', location={intent.location.formatted()}")
+        logger.info(
+            "Intent parsed: audience=%r interest=%r location=%r provider=%s",
+            intent.audience,
+            intent.interest,
+            intent.location.formatted(),
+            "see llm_service.stats",
+        )
 
-        # 2. Concurrently execute discovery across all supported platform adapters
+        # --- Step 2: Concurrent platform discovery ---
         tasks = [
             adapter.discover(intent, max_results=settings.MAX_RESULTS_PER_PLATFORM)
             for adapter in ALL_PLATFORMS
         ]
-        
-        results_nested = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
         raw_candidates: List[RawCandidate] = []
-        for i, res in enumerate(results_nested):
-            adapter_name = ALL_PLATFORMS[i].platform_name
-            if isinstance(res, Exception):
-                logger.error(f"Platform adapter '{adapter_name}' encountered an error: {res}")
-            elif isinstance(res, list):
-                logger.info(f"Platform adapter '{adapter_name}' discovered {len(res)} candidates.")
-                raw_candidates.extend(res)
+        for adapter, result in zip(ALL_PLATFORMS, results):
+            if isinstance(result, Exception):
+                logger.error(
+                    "Platform adapter %s failed: %s",
+                    adapter.platform_name,
+                    type(result).__name__,
+                )
+            elif isinstance(result, list):
+                logger.info(
+                    "Platform %s: %d candidate(s) found.",
+                    adapter.platform_name,
+                    len(result),
+                )
+                raw_candidates.extend(result)
 
-        # 3. Profile Extraction & Enrichment
-        enriched_candidates = [
-            profile_extractor.enrich_candidate(c, intent)
-            for c in raw_candidates
+        # --- Step 3: Enrich candidates ---
+        enriched: List[RawCandidate] = [
+            profile_extractor.enrich_candidate(c, intent) for c in raw_candidates
         ]
 
-        # 4. Relevance Scoring & Filtering
-        relevant_candidates = relevance_service.filter_relevant_candidates(enriched_candidates, intent)
-        logger.info(f"Filtered {len(relevant_candidates)} relevant candidates from {len(enriched_candidates)} raw candidates.")
+        # --- Step 4: Relevance filtering ---
+        relevant: List[RawCandidate] = relevance_service.filter_relevant_candidates(
+            enriched, intent
+        )
+        logger.info(
+            "Relevance filter: %d/%d candidates kept (threshold=%.0f).",
+            len(relevant),
+            len(enriched),
+            settings.RELEVANCE_THRESHOLD,
+        )
 
-        # If strict filtering leaves 0 candidates but raw candidates exist, gracefully take top scored candidates
-        if not relevant_candidates and enriched_candidates:
-            logger.info("Gracefully retaining top-ranked candidates to ensure non-empty results if available.")
-            enriched_candidates.sort(key=lambda x: getattr(x, "relevance_score", 0.0), reverse=True)
-            relevant_candidates = enriched_candidates[:5]
+        # Graceful fallback: if strict threshold removes everything, keep
+        # top-5 by score so the endpoint always returns *something* useful.
+        if not relevant and enriched:
+            logger.info("Threshold too strict; returning top-5 by score as fallback.")
+            enriched.sort(key=lambda c: c.relevance_score, reverse=True)
+            relevant = enriched[:5]
 
-        # 5. Duplicate Detection & Entity Consolidation
-        consolidated_prospects: List[Prospect] = deduplication_service.consolidate(relevant_candidates)
-        logger.info(f"Consolidated into {len(consolidated_prospects)} unique prospect records.")
+        # --- Step 5: Deduplication & consolidation ---
+        consolidated: List[Prospect] = deduplication_service.consolidate(relevant)
+        logger.info("Consolidated to %d unique prospect(s).", len(consolidated))
 
         return ProspectDiscoveryResponse(
             success=True,
             query=query,
-            total_prospects=len(consolidated_prospects),
-            prospects=consolidated_prospects
+            total_prospects=len(consolidated),
+            prospects=consolidated,
         )
+
 
 prospect_service = ProspectService()
