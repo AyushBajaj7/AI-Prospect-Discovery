@@ -218,3 +218,73 @@ def test_end_to_end_api_contract(monkeypatch):
     assert "X" in platforms
     assert "Email" in platforms
     assert any(sl["link"] == "mailto:alex@techventures.co" for sl in prospect["social_link"])
+
+# 9. Test Partial Platform Failure Resilience
+def test_partial_platform_failure_resilience(monkeypatch):
+    from app.platforms import ALL_PLATFORMS
+
+    # Pick the first adapter and simulate an unexpected crash/exception
+    orig_discover = ALL_PLATFORMS[0].discover
+    async def faulty_discover(*args, **kwargs):
+        raise ConnectionResetError("Remote server connection reset forcibly")
+
+    monkeypatch.setattr(ALL_PLATFORMS[0], "discover", faulty_discover)
+
+    # Mock remaining platforms to return valid candidates
+    async def mock_search(query: str, num_results: int = 5):
+        return [
+            {
+                "title": "David Beckham - Football Legend | Instagram",
+                "link": "https://www.instagram.com/davidbeckham",
+                "snippet": "Football enthusiast and owner in USA."
+            }
+        ]
+
+    from app.services import search_service
+    monkeypatch.setattr(search_service.search_service, "search", mock_search)
+
+    response = client.post(
+        "/prospect-discovery",
+        json={"query": "Football lovers in Washington DC in USA"}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    # Verify that despite adapter failure, discovery succeeded with remaining platforms
+    assert data["total_prospects"] >= 1
+
+# 10. Test End-to-End Execution on All 5 Mandatory Assessment Queries
+def test_all_five_assessment_queries_end_to_end(monkeypatch):
+    queries = [
+        "Football lovers in Washington DC in USA",
+        "Digital marketing agency owners in New York USA",
+        "Startup founders in London UK",
+        "Cricket lovers in Ahmedabad India",
+        "Restaurant owners in Dubai UAE"
+    ]
+
+    async def mock_search(query: str, num_results: int = 5):
+        return [
+            {
+                "title": "Test Prospect - Verified Profile | LinkedIn",
+                "link": "https://www.linkedin.com/in/test-prospect",
+                "snippet": f"Associated with {query}. Contact: test@prospect.com"
+            }
+        ]
+
+    from app.services import search_service
+    monkeypatch.setattr(search_service.search_service, "search", mock_search)
+
+    for q in queries:
+        resp = client.post("/prospect-discovery", json={"query": q})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["query"] == q
+        assert isinstance(body["prospects"], list)
+        assert body["total_prospects"] >= 1
+        first = body["prospects"][0]
+        assert "name" in first
+        assert "location" in first
+        assert isinstance(first["social_link"], list)
+
