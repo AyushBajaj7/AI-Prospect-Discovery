@@ -8,14 +8,15 @@ Each concrete adapter overrides:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from abc import ABC, abstractmethod
 from typing import List, Optional, Tuple
 
 from app.platforms.contacts import extract_all_contacts
-from app.schemas import RawCandidate, SocialLink, StructuredIntent
-from app.services.search_service import search_service
+from app.schemas import RawCandidate, SearchStatus, SocialLink, StructuredIntent
+from app.services.search_service import SearchHit, SearchService, search_service
 from app.utils.normalizers import (
     LOCATION_ALIASES,
     clean_name,
@@ -23,11 +24,16 @@ from app.utils.normalizers import (
     location_matches_text,
     normalize_location,
 )
-from app.utils.validators import clean_url, is_valid_profile_url
+from app.utils.validators import (
+    PLATFORM_PATTERNS,
+    clean_url,
+    is_valid_profile_url,
+    normalize_whatsapp_url,
+    sanitize_search_term,
+)
 
 logger = logging.getLogger(__name__)
 
-# Compact reverse lookup for detecting explicit non-query cities/countries in text
 _EXPLICIT_CITIES: Tuple[Tuple[str, str], ...] = (
     ("washington dc", "Washington DC, USA"),
     ("washington, d.c.", "Washington DC, USA"),
@@ -58,50 +64,83 @@ _EXPLICIT_CITIES: Tuple[Tuple[str, str], ...] = (
 class BasePlatformAdapter(ABC):
     platform_name: str = "Base"
 
-    # ------------------------------------------------------------------
-    # Shared helpers for query building & evidence-based extraction
-    # ------------------------------------------------------------------
-
     @staticmethod
     def _location_query_term(intent: StructuredIntent) -> str:
-        """Return a clean search-query location clause."""
-        if intent.location.city:
-            return f'"{intent.location.city}"'
-        if intent.location.country:
-            return f'"{intent.location.country}"'
+        """Return a sanitized search-query location clause."""
+        city = sanitize_search_term(intent.location.city, max_len=60)
+        if city:
+            return f'"{city}"'
+        country = sanitize_search_term(intent.location.country, max_len=60)
+        if country:
+            return f'"{country}"'
         return ""
 
     @staticmethod
     def _audience_query_term(intent: StructuredIntent) -> str:
         """
-        Return a balanced audience search clause that captures singular/plural
-        variations (e.g. "Startup founders" OR "Startup founder") rather than
-        over-constraining SERPs to plural strings rarely written in bios.
+        Return a sanitized, balanced audience search clause capturing
+        singular/plural variations without permitting search-operator injection.
         """
-        aud = intent.audience.strip()
+        aud = sanitize_search_term(intent.audience, max_len=80)
+        interest = sanitize_search_term(intent.interest, max_len=60)
+        if not aud:
+            return '""'
         words = aud.split()
-        # Singularize trailing plural role word ("founders" -> "founder")
         if words and words[-1].lower().endswith("s") and len(words[-1]) > 3:
             singular = " ".join(words[:-1] + [words[-1][:-1]])
             if len(words) <= 3:
                 return f'("{aud}" OR "{singular}")'
-            if intent.interest:
-                return f'("{singular}" OR ("{intent.interest}" "{words[-1][:-1]}"))'
+            if interest:
+                return f'("{singular}" OR ("{interest}" "{words[-1][:-1]}"))'
             return f'"{singular}"'
         return f'"{aud}"'
+
+    @staticmethod
+    def _topic_query_term(intent: StructuredIntent) -> str:
+        """Return a sanitized topic/interest term for search queries."""
+        topic = sanitize_search_term(intent.interest or intent.audience, max_len=80)
+        return f'"{topic}"' if topic else '""'
+
+    async def _execute_search(
+        self, query: str, max_results: int
+    ) -> Tuple[List[SearchHit], SearchStatus]:
+        """
+        Execute web search via `search_service` and classify the outcome while
+        remaining compatible with tests that monkeypatch `search_service.search`.
+        """
+        try:
+            # Check underlying __func__ rather than __dict__ so pytest monkeypatch
+            # restoration of the bound method doesn't shadow search_with_status.
+            if getattr(search_service.search, "__func__", None) is not SearchService.search:
+                hits = await search_service.search(query, num_results=max_results)
+                status = SearchStatus.SUCCESS if hits else SearchStatus.NO_RESULTS
+                return hits, status
+            outcome = await search_service.search_with_status(query, num_results=max_results)
+            return outcome.hits, outcome.status
+        except (TimeoutError, asyncio.TimeoutError):
+            logger.warning("Search timed out on platform %s", self.platform_name)
+            return [], SearchStatus.TIMEOUT
+        except Exception as exc:
+            logger.warning(
+                "Search failed on platform %s: %s", self.platform_name, type(exc).__name__
+            )
+            return [], SearchStatus.PROVIDER_ERROR
+
+    @staticmethod
+    def _record_outcome(platform_name: str, status: SearchStatus) -> None:
+        from app.services.prospect_service import prospect_service
+
+        prospect_service.record_platform_outcome(platform_name, status)
 
     def _infer_location(self, text: str, intent: StructuredIntent) -> Optional[str]:
         """
         Extract an evidence-backed location string strictly from `text`.
-
-        Never fabricates or blindly copies the search query's location onto a
-        candidate if the title/snippet contains zero geographical evidence.
+        Returns None if the snippet/title contains no geographical evidence.
         """
         text_lower = (text or "").lower()
         if not text_lower:
             return None
 
-        # 1. Check whether the text confirms the requested query city/country
         city_hit = bool(
             intent.location.city and location_matches_text(intent.location.city, text_lower)
         )
@@ -117,16 +156,13 @@ class BasePlatformAdapter(ABC):
                 parts.append(intent.location.country)
             return normalize_location(", ".join(p for p in parts if p))
 
-        # 2. Check if text explicitly states another known city (avoid misattribution)
         for city_token, formatted_loc in _EXPLICIT_CITIES:
             if re.search(rf"\b{re.escape(city_token)}\b", text_lower):
                 return normalize_location(formatted_loc)
 
-        # 3. Confirmed country match alone
         if country_hit and intent.location.country:
             return normalize_location(intent.location.country)
 
-        # 4. Other country alias evidence
         for canonical, aliases in (
             ("UK", LOCATION_ALIASES["uk"]),
             ("USA", LOCATION_ALIASES["usa"]),
@@ -146,38 +182,19 @@ class BasePlatformAdapter(ABC):
     def validate_url(self, url: str) -> bool:
         return is_valid_profile_url(self.platform_name, url)
 
-    # ------------------------------------------------------------------
-    # Abstract interface
-    # ------------------------------------------------------------------
-
     @abstractmethod
     def build_query(self, intent: StructuredIntent) -> str:
         """Return the search engine query string for this platform."""
 
-    # ------------------------------------------------------------------
-    # Discovery
-    # ------------------------------------------------------------------
-
     async def discover(
         self, intent: StructuredIntent, max_results: int = 5
     ) -> List[RawCandidate]:
-        """
-        1. Build platform-specific search query.
-        2. Execute search (via search_service).
-        3. Validate URLs.
-        4. Extract clean name, verified location, and public contacts.
-        5. Return list of RawCandidate objects.
-        """
         query = self.build_query(intent)
-        try:
-            hits = await search_service.search(query, num_results=max_results)
-        except Exception as exc:
-            logger.warning(
-                "Search failed on platform %s: %s", self.platform_name, type(exc).__name__
-            )
-            return []
+        hits, search_status = await self._execute_search(query, max_results)
+        self._record_outcome(self.platform_name, search_status)
 
         candidates: List[RawCandidate] = []
+        is_verified_social = self.platform_name in PLATFORM_PATTERNS
 
         for hit in hits:
             raw_url = hit.get("link", "")
@@ -204,7 +221,9 @@ class BasePlatformAdapter(ABC):
             for phone in contacts["phones"]:
                 social_links.append(SocialLink(platform="Phone", link=f"tel:{phone}"))
             for wa in contacts["whatsapp_links"]:
-                social_links.append(SocialLink(platform="WhatsApp", link=clean_url(wa)))
+                wa_norm = normalize_whatsapp_url(wa)
+                if wa_norm:
+                    social_links.append(SocialLink(platform="WhatsApp", link=wa_norm))
 
             handle = extract_handle(profile_url, self.platform_name)
 
@@ -220,6 +239,7 @@ class BasePlatformAdapter(ABC):
                     phones=contacts["phones"],
                     whatsapp_links=contacts["whatsapp_links"],
                     social_links=social_links,
+                    verification_status="verified_profile" if is_verified_social else "public_web",
                     metadata={"handle": handle},
                 )
             )

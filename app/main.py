@@ -1,19 +1,22 @@
 """
 FastAPI application entry-point.
 
-Security hardening:
-- CORS origins are configurable (not open wildcard with credentials).
-- allow_credentials is False by default to prevent cookie-based CSRF.
-- Internal exception details are never exposed to API callers.
-- A unique request-ID header is added to every response (including errors).
-- Request body size is bounded to 64 KB via pure ASGI middleware (handles both
-  Content-Length headers and chunked/streaming bodies without buffering overload).
+Security & reliability hardening:
+- Explicit CORS origins allowlist (never wildcard with credentials).
+- Pure ASGI BodySizeLimitMiddleware enforcing a strict 64 KB cap (including chunked).
+- Pure ASGI RequestIDMiddleware attaching X-Request-ID to every response.
+- Pure ASGI RateLimitMiddleware (sliding window per client IP on POST /prospect-discovery).
+- Shared HTTPX connection pool managed via FastAPI lifespan.
+- Sanitized error handlers (never leak stack traces or exception messages).
 """
 from __future__ import annotations
 
 import logging
+import time
 import uuid
-from typing import Any, Callable, Dict
+from collections import defaultdict, deque
+from contextlib import asynccontextmanager
+from typing import Any, Deque, Dict, Optional
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -24,10 +27,8 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from app.config import settings
 from app.schemas import ProspectDiscoveryResponse, ProspectQueryRequest
 from app.services.prospect_service import prospect_service
+from app.services.search_service import search_service
 
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
@@ -36,8 +37,17 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Application
+# Application Lifespan (shared HTTPX client pool)
 # ---------------------------------------------------------------------------
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await search_service.startup()
+    try:
+        yield
+    finally:
+        await search_service.shutdown()
+
+
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
@@ -50,14 +60,100 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
+    lifespan=lifespan,
 )
 
 
 # ---------------------------------------------------------------------------
-# Pure ASGI Middleware: body-size limiter (registered innermost under RequestID)
+# Pure ASGI Middleware: per-IP sliding-window rate limiter
+# Note: Process-local storage protects single-worker instances; use Redis or
+# gateway throttling in multi-worker / clustered deployments.
+# ---------------------------------------------------------------------------
+class RateLimitMiddleware:
+    """Sliding-window per-client-IP rate limiter for POST /prospect-discovery."""
+
+    # Class-level store reference cleared easily in unit tests if needed
+    _hits: Dict[str, Deque[float]] = defaultdict(deque)
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    @classmethod
+    def reset(cls) -> None:
+        """Reset rate-limit counters (useful in test isolation)."""
+        cls._hits.clear()
+
+    @staticmethod
+    def _client_ip(scope: Scope) -> str:
+        headers = {k.lower(): v for k, v in scope.get("headers", [])}
+        forwarded = headers.get(b"x-forwarded-for")
+        if forwarded:
+            return forwarded.decode("latin-1").split(",")[0].strip() or "unknown"
+        client = scope.get("client")
+        return client[0] if client else "unknown"
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+        method = scope.get("method", "").upper()
+        if path != "/prospect-discovery" or method != "POST":
+            await self.app(scope, receive, send)
+            return
+
+        now = time.monotonic()
+        window = settings.RATE_LIMIT_WINDOW_SECONDS
+        limit = settings.RATE_LIMIT_REQUESTS
+        ip = self._client_ip(scope)
+
+        bucket = self._hits[ip]
+        while bucket and (now - bucket[0]) >= window:
+            bucket.popleft()
+
+        if len(bucket) >= limit:
+            retry_after = max(1, int(window - (now - bucket[0])))
+            request_id = scope.get("state", {}).get("request_id", "unknown")
+            resp = JSONResponse(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                headers={
+                    "Retry-After": str(retry_after),
+                    "X-RateLimit-Limit": str(limit),
+                    "X-RateLimit-Remaining": "0",
+                },
+                content={
+                    "success": False,
+                    "error": "Rate limit exceeded. Please try again later.",
+                    "request_id": request_id,
+                },
+            )
+            await resp(scope, receive, send)
+            return
+
+        bucket.append(now)
+        remaining = max(0, limit - len(bucket))
+
+        async def send_with_ratelimit(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                raw_headers = list(message.get("headers", []))
+                raw_headers.extend(
+                    [
+                        (b"x-ratelimit-limit", str(limit).encode("ascii")),
+                        (b"x-ratelimit-remaining", str(remaining).encode("ascii")),
+                    ]
+                )
+                message["headers"] = raw_headers
+            await send(message)
+
+        await self.app(scope, receive, send_with_ratelimit)
+
+
+# ---------------------------------------------------------------------------
+# Pure ASGI Middleware: body-size limiter (handles declared + chunked streams)
 # ---------------------------------------------------------------------------
 class _BodyTooLargeError(Exception):
-    """Raised internally when a streaming request body exceeds MAX_BYTES."""
+    """Raised internally when a streamed body exceeds MAX_BYTES."""
 
 
 class BodySizeLimitMiddleware:
@@ -81,10 +177,7 @@ class BodySizeLimitMiddleware:
             except ValueError:
                 resp = JSONResponse(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    content={
-                        "success": False,
-                        "error": "Invalid Content-Length header.",
-                    },
+                    content={"success": False, "error": "Invalid Content-Length header."},
                 )
                 await resp(scope, receive, send)
                 return
@@ -101,8 +194,6 @@ class BodySizeLimitMiddleware:
                 await resp(scope, receive, send)
                 return
 
-        # Enforce hard byte limit on actual streamed chunks (protects against
-        # Transfer-Encoding: chunked or spoofed Content-Length headers).
         bytes_seen = 0
 
         async def bounded_receive() -> Message:
@@ -129,7 +220,7 @@ class BodySizeLimitMiddleware:
 
 
 # ---------------------------------------------------------------------------
-# Pure ASGI Middleware: request-ID injection (runs around BodySizeLimit)
+# Pure ASGI Middleware: request-ID injection (runs around limiter middlewares)
 # ---------------------------------------------------------------------------
 class RequestIDMiddleware:
     """Attaches a UUID to each HTTP request and echoes it in X-Request-ID."""
@@ -156,13 +247,14 @@ class RequestIDMiddleware:
 
 
 # Registration order (last added = outermost):
-#   CORSMiddleware (outermost) -> RequestIDMiddleware -> BodySizeLimitMiddleware
+#   CORSMiddleware -> RequestIDMiddleware -> BodySizeLimitMiddleware -> RateLimitMiddleware
+app.add_middleware(RateLimitMiddleware)
 app.add_middleware(BodySizeLimitMiddleware)
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins(),
-    allow_credentials=False,   # No cookie / session credentials needed
+    allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "Accept", "X-Request-ID"],
 )
@@ -175,9 +267,6 @@ app.add_middleware(
 async def validation_exception_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
-    # exc.errors() may contain non-serialisable ValueError objects inside the
-    # 'ctx' key (e.g. when a field_validator raises ValueError).
-    # Sanitise each error dict so the response is always valid JSON.
     safe_errors: list[Dict[str, Any]] = []
     for err in exc.errors():
         safe_err: Dict[str, Any] = {
@@ -222,7 +311,6 @@ async def global_exception_handler(
     logger.exception(
         "Unhandled error [request_id=%s] on %s", request_id, request.url.path
     )
-    # Never expose internal stack traces or raw exception messages to callers.
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={
@@ -262,7 +350,8 @@ async def health() -> dict:
         "Accepts a natural-language query, extracts audience/location intent via LLM, "
         "concurrently discovers public profiles across Google, LinkedIn, X, YouTube, "
         "Instagram, Facebook, Threads, WhatsApp, and Email, deduplicates cross-platform "
-        "matches, scores relevance, and returns a consolidated JSON list of prospects."
+        "matches, scores relevance strictly, and returns consolidated prospects plus "
+        "provider health telemetry."
     ),
 )
 async def discover_prospects(
@@ -286,18 +375,13 @@ async def discover_prospects(
     except HTTPException:
         raise
     except Exception:
-        logger.exception(
-            "Discovery pipeline error [request_id=%s]", request_id
-        )
+        logger.exception("Discovery pipeline error [request_id=%s]", request_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Prospect discovery failed. Please try again later.",
         )
 
 
-# ---------------------------------------------------------------------------
-# Entry-point for direct execution
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     import uvicorn
 

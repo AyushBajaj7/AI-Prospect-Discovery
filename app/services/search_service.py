@@ -1,15 +1,12 @@
 """
-Search service – multi-provider web search with bounded caching, concurrency
-limiting, HTTP 429 retry handling, and graceful fallback chain.
+Search service – multi-provider web search with shared HTTPX lifespan client,
+bounded LRU+TTL caching, concurrency semaphore, explicit outcome tracking,
+and graceful provider fallback chain.
 
 Provider priority (auto mode): Serper → Brave → DuckDuckGo (free, no key).
-
-Security notes
---------------
-* API keys are read from settings; never logged or echoed.
-* All results are sanitized dicts with str values – no code execution.
-* Explicit timeouts and concurrency limits protect against hung connections
-  and upstream rate-limit bursts.
+Only non-empty successful results are cached; rate-limit / timeout / error
+outcomes are explicitly returned via `SearchStatus` so callers can distinguish
+zero results from upstream failures.
 """
 from __future__ import annotations
 
@@ -17,99 +14,154 @@ import asyncio
 import logging
 import time
 from collections import OrderedDict
-from typing import Dict, List, Tuple
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
 
 import httpx
 
 from app.config import settings
+from app.schemas import SearchStatus
 
 logger = logging.getLogger(__name__)
 
 SearchHit = Dict[str, str]  # keys: title, link, snippet
 
 
+@dataclass
+class SearchOutcome:
+    hits: List[SearchHit]
+    status: SearchStatus
+    provider: str = "none"
+    cached: bool = False
+
+
 class SearchService:
 
     def __init__(self) -> None:
         self._timeout = httpx.Timeout(settings.SEARCH_TIMEOUT_SECONDS)
+        self._limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
+        self._client: Optional[httpx.AsyncClient] = None
         self._semaphore = asyncio.Semaphore(settings.SEARCH_MAX_CONCURRENCY)
-        # {(normalized_query, num_results): (cached_at_monotonic, List[SearchHit])}
-        self._cache: OrderedDict[Tuple[str, int], Tuple[float, List[SearchHit]]] = OrderedDict()
+        # Caches ONLY non-empty successful searches
+        self._cache: OrderedDict[Tuple[str, int], Tuple[float, List[SearchHit], str]] = OrderedDict()
 
-    def _get_cached(self, query: str, num_results: int) -> List[SearchHit] | None:
+    async def startup(self) -> None:
+        """Initialize the shared HTTPX connection pool during FastAPI lifespan startup."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=self._timeout, limits=self._limits)
+
+    async def shutdown(self) -> None:
+        """Close the shared HTTPX connection pool cleanly on shutdown."""
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
+
+    def _get_cached(self, query: str, num_results: int) -> Optional[SearchOutcome]:
         key = (query.strip(), num_results)
         now = time.monotonic()
         if key in self._cache:
-            cached_at, hits = self._cache[key]
+            cached_at, hits, provider = self._cache[key]
             if now - cached_at < settings.CACHE_TTL_SECONDS:
                 self._cache.move_to_end(key)
-                return [dict(h) for h in hits]
+                return SearchOutcome(
+                    hits=[dict(h) for h in hits],
+                    status=SearchStatus.SUCCESS,
+                    provider=provider,
+                    cached=True,
+                )
             del self._cache[key]
         return None
 
-    def _put_cache(self, query: str, num_results: int, hits: List[SearchHit]) -> None:
+    def _put_cache(
+        self, query: str, num_results: int, hits: List[SearchHit], provider: str
+    ) -> None:
+        if not hits:
+            return  # Never cache empty or failed results
         now = time.monotonic()
         expired = [
-            k for k, (ts, _) in self._cache.items()
+            k for k, (ts, _, _) in self._cache.items()
             if now - ts >= settings.CACHE_TTL_SECONDS
         ]
         for k in expired:
             del self._cache[k]
         while len(self._cache) >= settings.CACHE_MAX_SIZE:
             self._cache.popitem(last=False)
-        self._cache[(query.strip(), num_results)] = (now, [dict(h) for h in hits])
+        self._cache[(query.strip(), num_results)] = (now, [dict(h) for h in hits], provider)
 
-    async def search(self, query: str, num_results: int = 5) -> List[SearchHit]:
+    async def _run_http_call(self, fn):
+        """Use shared lifespan client if open, else scope a temporary client cleanly."""
+        if self._client is not None and not self._client.is_closed:
+            return await fn(self._client)
+        async with httpx.AsyncClient(timeout=self._timeout, limits=self._limits) as temp_client:
+            return await fn(temp_client)
+
+    async def search_with_status(
+        self, query: str, num_results: int = 5
+    ) -> SearchOutcome:
         """
-        Execute a web search and return a list of {title, link, snippet} dicts.
-
-        Uses TTL caching, bounded concurrency, and falls back down the provider
-        chain cleanly on failure rather than raising.
+        Execute a search and return `SearchOutcome` containing both `hits` and
+        explicit `SearchStatus` (`SUCCESS`, `NO_RESULTS`, `RATE_LIMITED`,
+        `TIMEOUT`, or `PROVIDER_ERROR`).
         """
         if not query or not query.strip():
-            return []
+            return SearchOutcome(hits=[], status=SearchStatus.NO_RESULTS, provider="none")
 
         cached = self._get_cached(query, num_results)
         if cached is not None:
             return cached
 
-        provider = settings.SEARCH_PROVIDER
-        results: List[SearchHit] = []
+        provider_cfg = settings.SEARCH_PROVIDER
+        candidates: List[str] = []
+
+        if provider_cfg == "auto":
+            if settings.SERPER_API_KEY:
+                candidates.append("serper")
+            if settings.BRAVE_API_KEY:
+                candidates.append("brave")
+            candidates.append("ddg")
+        elif provider_cfg == "serper":
+            if settings.SERPER_API_KEY:
+                candidates.append("serper")
+            candidates.append("ddg")
+        elif provider_cfg == "brave":
+            if settings.BRAVE_API_KEY:
+                candidates.append("brave")
+            candidates.append("ddg")
+        else:
+            candidates.append("ddg")
 
         async with self._semaphore:
-            if provider == "auto":
-                if settings.SERPER_API_KEY:
-                    results = await self._search_serper(query, num_results)
-                if not results and settings.BRAVE_API_KEY:
-                    results = await self._search_brave(query, num_results)
-                if not results:
-                    results = await self._search_ddg(query, num_results)
-            elif provider == "serper":
-                if settings.SERPER_API_KEY:
-                    results = await self._search_serper(query, num_results)
-                if not results:
-                    results = await self._search_ddg(query, num_results)
-            elif provider == "brave":
-                if settings.BRAVE_API_KEY:
-                    results = await self._search_brave(query, num_results)
-                if not results:
-                    results = await self._search_ddg(query, num_results)
-            else:
-                results = await self._search_ddg(query, num_results)
+            last_outcome = SearchOutcome(hits=[], status=SearchStatus.NO_RESULTS, provider="none")
+            for prov in candidates:
+                if prov == "serper":
+                    outcome = await self._search_serper(query, num_results)
+                elif prov == "brave":
+                    outcome = await self._search_brave(query, num_results)
+                else:
+                    outcome = await self._search_ddg(query, num_results)
 
-        if results:
-            self._put_cache(query, num_results, results)
-        return results
+                if outcome.hits:
+                    self._put_cache(query, num_results, outcome.hits, outcome.provider)
+                    return outcome
+                last_outcome = outcome
+
+            return last_outcome
+
+    async def search(self, query: str, num_results: int = 5) -> List[SearchHit]:
+        """Backward-compatible helper returning hits list."""
+        outcome = await self.search_with_status(query, num_results=num_results)
+        return outcome.hits
 
     # ------------------------------------------------------------------
-    # Provider implementations (with HTTP 429 retry / backoff)
+    # Provider implementations (HTTP 429 & timeout-aware)
     # ------------------------------------------------------------------
 
-    async def _search_serper(self, query: str, num: int) -> List[SearchHit]:
+    async def _search_serper(self, query: str, num: int) -> SearchOutcome:
+        last_status = SearchStatus.PROVIDER_ERROR
         for attempt in range(2):
             try:
-                async with httpx.AsyncClient(timeout=self._timeout) as client:
-                    resp = await client.post(
+                async def _do(client: httpx.AsyncClient):
+                    return await client.post(
                         "https://google.serper.dev/search",
                         headers={
                             "X-API-KEY": settings.SERPER_API_KEY,  # type: ignore[arg-type]
@@ -117,32 +169,46 @@ class SearchService:
                         },
                         json={"q": query, "num": num},
                     )
-                    if resp.status_code == 429 and attempt == 0:
+
+                resp = await self._run_http_call(_do)
+                if resp.status_code == 429:
+                    last_status = SearchStatus.RATE_LIMITED
+                    if attempt == 0:
                         await asyncio.sleep(0.8)
                         continue
-                    resp.raise_for_status()
-                    return [
-                        {
-                            "title": str(item.get("title", "")),
-                            "link": str(item.get("link", "")),
-                            "snippet": str(item.get("snippet", "")),
-                        }
-                        for item in resp.json().get("organic", [])
-                    ]
+                    return SearchOutcome(hits=[], status=SearchStatus.RATE_LIMITED, provider="serper")
+
+                resp.raise_for_status()
+                hits = [
+                    {
+                        "title": str(item.get("title", "")),
+                        "link": str(item.get("link", "")),
+                        "snippet": str(item.get("snippet", "")),
+                    }
+                    for item in resp.json().get("organic", [])
+                ]
+                status = SearchStatus.SUCCESS if hits else SearchStatus.NO_RESULTS
+                return SearchOutcome(hits=hits, status=status, provider="serper")
+
+            except httpx.TimeoutException:
+                logger.warning("Serper search timed out.")
+                return SearchOutcome(hits=[], status=SearchStatus.TIMEOUT, provider="serper")
             except httpx.HTTPStatusError as exc:
                 logger.warning("Serper API HTTP %s.", exc.response.status_code)
-                break
+                return SearchOutcome(hits=[], status=SearchStatus.PROVIDER_ERROR, provider="serper")
             except Exception as exc:
                 logger.warning("Serper search error: %s", type(exc).__name__)
+                last_status = SearchStatus.PROVIDER_ERROR
                 if attempt == 0:
                     await asyncio.sleep(0.4)
-        return []
+        return SearchOutcome(hits=[], status=last_status, provider="serper")
 
-    async def _search_brave(self, query: str, num: int) -> List[SearchHit]:
+    async def _search_brave(self, query: str, num: int) -> SearchOutcome:
+        last_status = SearchStatus.PROVIDER_ERROR
         for attempt in range(2):
             try:
-                async with httpx.AsyncClient(timeout=self._timeout) as client:
-                    resp = await client.get(
+                async def _do(client: httpx.AsyncClient):
+                    return await client.get(
                         "https://api.search.brave.com/res/v1/web/search",
                         headers={
                             "X-Subscription-Token": settings.BRAVE_API_KEY,  # type: ignore[arg-type]
@@ -150,29 +216,42 @@ class SearchService:
                         },
                         params={"q": query, "count": num},
                     )
-                    if resp.status_code == 429 and attempt == 0:
+
+                resp = await self._run_http_call(_do)
+                if resp.status_code == 429:
+                    last_status = SearchStatus.RATE_LIMITED
+                    if attempt == 0:
                         await asyncio.sleep(0.8)
                         continue
-                    resp.raise_for_status()
-                    return [
-                        {
-                            "title": str(item.get("title", "")),
-                            "link": str(item.get("url", "")),
-                            "snippet": str(item.get("description", "")),
-                        }
-                        for item in resp.json().get("web", {}).get("results", [])
-                    ]
+                    return SearchOutcome(hits=[], status=SearchStatus.RATE_LIMITED, provider="brave")
+
+                resp.raise_for_status()
+                hits = [
+                    {
+                        "title": str(item.get("title", "")),
+                        "link": str(item.get("url", "")),
+                        "snippet": str(item.get("description", "")),
+                    }
+                    for item in resp.json().get("web", {}).get("results", [])
+                ]
+                status = SearchStatus.SUCCESS if hits else SearchStatus.NO_RESULTS
+                return SearchOutcome(hits=hits, status=status, provider="brave")
+
+            except httpx.TimeoutException:
+                logger.warning("Brave search timed out.")
+                return SearchOutcome(hits=[], status=SearchStatus.TIMEOUT, provider="brave")
             except httpx.HTTPStatusError as exc:
                 logger.warning("Brave API HTTP %s.", exc.response.status_code)
-                break
+                return SearchOutcome(hits=[], status=SearchStatus.PROVIDER_ERROR, provider="brave")
             except Exception as exc:
                 logger.warning("Brave search error: %s", type(exc).__name__)
+                last_status = SearchStatus.PROVIDER_ERROR
                 if attempt == 0:
                     await asyncio.sleep(0.4)
-        return []
+        return SearchOutcome(hits=[], status=last_status, provider="brave")
 
-    async def _search_ddg(self, query: str, num: int) -> List[SearchHit]:
-        """DuckDuckGo via `ddgs`, offloaded to thread with retry on throttling."""
+    async def _search_ddg(self, query: str, num: int) -> SearchOutcome:
+        """DuckDuckGo via `ddgs`, offloaded to thread with status classification."""
 
         def _sync_search() -> List[SearchHit]:
             try:
@@ -190,14 +269,27 @@ class SearchService:
                 for item in hits
             ]
 
+        last_status = SearchStatus.PROVIDER_ERROR
         for attempt in range(2):
             try:
-                return await asyncio.to_thread(_sync_search)
+                hits = await asyncio.to_thread(_sync_search)
+                status = SearchStatus.SUCCESS if hits else SearchStatus.NO_RESULTS
+                return SearchOutcome(hits=hits, status=status, provider="ddg")
+            except TimeoutError:
+                last_status = SearchStatus.TIMEOUT
             except Exception as exc:
+                exc_str = str(exc).lower()
+                if "429" in exc_str or "ratelimit" in exc_str or "rate limit" in exc_str:
+                    last_status = SearchStatus.RATE_LIMITED
+                elif "timeout" in exc_str:
+                    last_status = SearchStatus.TIMEOUT
+                else:
+                    last_status = SearchStatus.PROVIDER_ERROR
                 logger.warning("DDG search error (attempt %d): %s", attempt + 1, type(exc).__name__)
-                if attempt == 0:
-                    await asyncio.sleep(0.6)
-        return []
+            if attempt == 0:
+                await asyncio.sleep(0.6)
+
+        return SearchOutcome(hits=[], status=last_status, provider="ddg")
 
 
 search_service = SearchService()

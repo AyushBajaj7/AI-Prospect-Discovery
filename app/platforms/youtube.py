@@ -8,8 +8,8 @@ class YouTubeAdapter(BasePlatformAdapter):
 
     def build_query(self, intent: StructuredIntent) -> str:
         loc = self._location_query_term(intent)
-        topic = intent.interest or intent.audience
+        topic_clause = self._topic_query_term(intent)
         return (
-            f'site:youtube.com "{topic}" {loc} '
+            f"site:youtube.com {topic_clause} {loc} "
             f"-inurl:/watch -inurl:/playlist -inurl:/shorts"
         ).strip()

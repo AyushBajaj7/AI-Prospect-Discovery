@@ -2,27 +2,22 @@
 Public Email & Contact adapter.
 
 Discovers publicly published email addresses and contact points from public
-web pages / bios matching the target audience without fabrication or scraping
-behind authentication walls.
+web pages / bios matching the target audience without fabrication.
 """
 from __future__ import annotations
 
-import logging
-from typing import List
+from typing import List, Optional
 from urllib.parse import urlparse
 
 from app.platforms.base import BasePlatformAdapter
 from app.platforms.contacts import extract_all_contacts
 from app.schemas import RawCandidate, SocialLink, StructuredIntent
-from app.services.search_service import search_service
 from app.utils.normalizers import clean_name, extract_handle
-from app.utils.validators import PLATFORM_PATTERNS, clean_url, is_valid_profile_url
-
-logger = logging.getLogger(__name__)
+from app.utils.validators import clean_url, is_valid_profile_url, normalize_whatsapp_url
 
 
-def _classify_source_platform(url: str) -> str | None:
-    """Return the verified platform name for a source URL, or None if invalid non-profile social URL."""
+def _classify_source_platform(url: str) -> Optional[str]:
+    """Return the verified platform name for a source URL, or None if invalid."""
     hostname = (urlparse(url).hostname or "").lower()
     domain_map = {
         "linkedin.com": "LinkedIn",
@@ -57,11 +52,8 @@ class EmailAdapter(BasePlatformAdapter):
         self, intent: StructuredIntent, max_results: int = 5
     ) -> List[RawCandidate]:
         query = self.build_query(intent)
-        try:
-            hits = await search_service.search(query, num_results=max_results)
-        except Exception as exc:
-            logger.warning("Email discovery search error: %s", type(exc).__name__)
-            return []
+        hits, search_status = await self._execute_search(query, max_results)
+        self._record_outcome(self.platform_name, search_status)
 
         candidates: List[RawCandidate] = []
 
@@ -93,9 +85,9 @@ class EmailAdapter(BasePlatformAdapter):
             for phone in contacts["phones"]:
                 social_links.append(SocialLink(platform="Phone", link=f"tel:{phone}"))
             for wa in contacts["whatsapp_links"]:
-                cleaned_wa = clean_url(wa)
-                if PLATFORM_PATTERNS["WhatsApp"].match(cleaned_wa):
-                    social_links.append(SocialLink(platform="WhatsApp", link=cleaned_wa))
+                wa_norm = normalize_whatsapp_url(wa)
+                if wa_norm:
+                    social_links.append(SocialLink(platform="WhatsApp", link=wa_norm))
 
             handle = extract_handle(page_url, source_platform)
 
@@ -111,6 +103,9 @@ class EmailAdapter(BasePlatformAdapter):
                     phones=contacts["phones"],
                     whatsapp_links=contacts["whatsapp_links"],
                     social_links=social_links,
+                    verification_status=(
+                        "verified_profile" if source_platform != "Google" else "public_web"
+                    ),
                     metadata={"handle": handle},
                 )
             )

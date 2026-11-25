@@ -23,21 +23,32 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from starlette.testclient import TestClient
 
-from app.main import app
-from app.schemas import LocationDetails, RawCandidate, SocialLink, StructuredIntent
+from app.main import RateLimitMiddleware, app
+from app.schemas import LocationDetails, RawCandidate, SearchStatus, SocialLink, StructuredIntent
 from app.services.deduplication_service import deduplication_service
-from app.services.llm_service import llm_service
+from app.services.llm_service import KNOWN_LOCATIONS, llm_service
 from app.services.query_service import query_service
 from app.services.relevance_service import relevance_service
+from app.services.search_service import SearchService
 from app.utils.normalizers import clean_name, extract_handle
 from app.utils.validators import (
     clean_url,
     is_valid_email,
     is_valid_phone,
     is_valid_profile_url,
+    normalize_whatsapp_url,
+    sanitize_search_term,
 )
 
 client = TestClient(app, raise_server_exceptions=False)
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter_per_test():
+    """Keep per-IP sliding window deterministic across isolated test cases."""
+    RateLimitMiddleware.reset()
+    yield
+    RateLimitMiddleware.reset()
 
 
 # ===========================================================================
@@ -210,12 +221,12 @@ class TestValidators:
         ("Instagram", "https://instagram.com/natgeo"),
         ("Facebook", "https://www.facebook.com/zuck"),
         ("Threads", "https://threads.net/@zuck"),
-        ("WhatsApp", "https://wa.me/+12025551234"),
+        ("WhatsApp", "https://wa.me/12025551234"),
     ])
     def test_valid_profile_urls(self, platform, url):
         assert is_valid_profile_url(platform, url), f"Expected valid: {platform} {url}"
 
-    # --- Invalid URLs (posts / search / feeds) ---
+    # --- Invalid URLs (posts / search / feeds / malformed WhatsApp) ---
     @pytest.mark.parametrize("platform,url", [
         ("LinkedIn", "https://www.linkedin.com/posts/activity-123"),
         ("LinkedIn", "https://www.linkedin.com/company/google"),
@@ -227,6 +238,7 @@ class TestValidators:
         ("Instagram", "https://instagram.com/reel/ABC123/"),
         ("Facebook", "https://www.facebook.com/groups/somegroup"),
         ("Threads", "https://threads.net/@zuck/post/12345"),
+        ("WhatsApp", "https://wa.me/+12025551234"),  # '+' invalid without normalization
     ])
     def test_invalid_profile_urls(self, platform, url):
         assert not is_valid_profile_url(platform, url), f"Expected invalid: {platform} {url}"
@@ -762,6 +774,8 @@ class TestSecurityAndEdgeCases:
         "Instagram",
         "404 Not Found",
         "Just a moment",
+        "2026 New Jersey Travel Guide: must-see attractions, popular ...",
+        "Restaurant, Bars & Cafes News and Updates from Dubai, UAE and ...",
     ])
     def test_boilerplate_names_rejected(self, boilerplate):
         assert clean_name(boilerplate, "Instagram") == ""
@@ -895,6 +909,262 @@ class TestSecurityAndEdgeCases:
         assert not g.validate_url("https://news.northeastern.edu/2026/06/05/startup-pitch-competition")
         assert not g.validate_url("https://www.meetup.com/london-entrepreneur-startup-network")
         assert not g.validate_url("https://www.london.edu/insights/news/spotlight")
+        assert not g.validate_url("https://www.trip.com/moments/destination-new-jersey-1427")
+        assert not g.validate_url("https://www.caterermiddleeast.com/outlets")
         assert g.validate_url("https://about.me/alexmorgan")
+
+
+# ===========================================================================
+# 12. Security audit remediation, fallback chain, unknown cities & resilience
+# ===========================================================================
+
+class TestSecurityAndAccuracyAuditFixes:
+
+    def test_whatsapp_normalization_strips_plus_and_formatting(self):
+        from app.platforms.contacts import extract_whatsapp_links
+
+        assert normalize_whatsapp_url("https://wa.me/+442079460991") == "https://wa.me/442079460991"
+        assert (
+            normalize_whatsapp_url("https://api.whatsapp.com/send?phone=+44 20 7946 0991&text=hi")
+            == "https://wa.me/442079460991"
+        )
+        assert clean_url("https://wa.me/+12025551234") == "https://wa.me/12025551234"
+        links = extract_whatsapp_links("Reach us at https://wa.me/+442079460991 today")
+        assert links == ["https://wa.me/442079460991"]
+
+    def test_search_operator_and_prompt_injection_sanitized(self):
+        from app.platforms.linkedin import LinkedInAdapter
+
+        malicious = 'Founders" OR site:internal.corp -site:linkedin.com inurl:admin'
+        cleaned = sanitize_search_term(malicious)
+        assert "site:" not in cleaned.lower()
+        assert "inurl:" not in cleaned.lower()
+        assert '"' not in cleaned
+        assert "-site" not in cleaned.lower()
+
+        adapter = LinkedInAdapter()
+        injected_intent = StructuredIntent(
+            interest='Tech" OR site:secret.internal',
+            audience='CEO" OR site:internal.corp -site:linkedin.com',
+            location=LocationDetails(city='London" OR inurl:login'),
+        )
+        q = adapter.build_query(injected_intent)
+        assert "site:internal.corp" not in q
+        assert "site:secret.internal" not in q
+        assert "inurl:login" not in q
+        assert q.startswith("site:linkedin.com/in/")
+
+    @pytest.mark.parametrize("ipv6_url", [
+        "http://[::1]:4000/admin",
+        "http://[fe80::1]/secret",
+        "http://[fc00::1]/internal",
+        "http://[::ffff:127.0.0.1]/admin",
+    ])
+    def test_ipv6_private_and_loopback_urls_rejected(self, ipv6_url):
+        assert not is_valid_profile_url("Google", ipv6_url)
+
+    def test_redos_adversarial_long_inputs_complete_quickly(self):
+        import time
+        from app.platforms.contacts import extract_all_contacts
+
+        adversarial = ("a." * 3000) + "@@@@" + ("1-2-" * 3000) + " https://wa.me/+" + ("9" * 5000)
+        start = time.perf_counter()
+        contacts = extract_all_contacts(adversarial)
+        elapsed = time.perf_counter() - start
+        assert elapsed < 0.2, f"Regex scan took too long: {elapsed:.3f}s"
+        assert contacts["emails"] == []
+
+    def test_endpoint_rate_limiting_enforced(self, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "RATE_LIMIT_REQUESTS", 3)
+        monkeypatch.setattr(settings, "RATE_LIMIT_WINDOW_SECONDS", 60)
+        monkeypatch.setattr(
+            "app.services.search_service.search_service.search_with_status",
+            AsyncMock(return_value=type("R", (), {"hits": [], "status": SearchStatus.NO_RESULTS})()),
+        )
+
+        RateLimitMiddleware.reset()
+        for idx in range(3):
+            resp = client.post(
+                "/prospect-discovery",
+                json={"query": f"Startup founders in London UK #{idx}"},
+            )
+            assert resp.status_code == 200
+            assert resp.headers.get("X-RateLimit-Limit") == "3"
+
+        blocked = client.post(
+            "/prospect-discovery",
+            json={"query": "Startup founders in London UK #4"},
+        )
+        assert blocked.status_code == 429
+        assert "Retry-After" in blocked.headers
+        assert "X-Request-ID" in blocked.headers
+        assert blocked.json()["success"] is False
+
+    def test_genuine_unknown_city_and_country_parsing(self):
+        assert "austin" not in KNOWN_LOCATIONS
+        assert "nairobi" not in KNOWN_LOCATIONS
+        assert "kenya" not in [k.lower() for k in KNOWN_LOCATIONS]
+
+        i1 = asyncio.run(llm_service.parse_query("Startup founders in Nairobi Kenya"))
+        assert i1.location.city == "Nairobi"
+        assert i1.location.country == "Kenya"
+
+        i2 = asyncio.run(llm_service.parse_query("Photographers in Reykjavik Iceland"))
+        assert i2.location.city == "Reykjavik"
+        assert i2.location.country == "Iceland"
+
+        i3 = asyncio.run(llm_service.parse_query("Yoga instructors in Austin, Texas, USA"))
+        assert i3.location.city == "Austin"
+        assert i3.location.state == "Texas"
+        assert i3.location.country == "USA"
+
+    def test_target_type_consistency_rule(self):
+        owner_intent = llm_service._parse_heuristic("Restaurant owners in Dubai UAE")
+        agency_owner_intent = llm_service._parse_heuristic("Digital marketing agency owners in New York USA")
+        org_intent = llm_service._parse_heuristic("Digital marketing agencies in New York USA")
+        assert owner_intent.target_type == "individual"
+        assert agency_owner_intent.target_type == "individual"
+        assert org_intent.target_type == "business"
+
+    def test_llm_multi_provider_fallback_chain(self, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "LLM_PROVIDER", "auto")
+        monkeypatch.setattr(settings, "OPENAI_API_KEY", "fake-openai")
+        monkeypatch.setattr(settings, "GEMINI_API_KEY", "fake-gemini")
+        monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "fake-anthropic")
+
+        expected_gemini = StructuredIntent(
+            interest="Football",
+            audience="Football lovers",
+            location=LocationDetails(city="London", country="UK"),
+        )
+
+        monkeypatch.setattr(llm_service, "_call_openai", AsyncMock(side_effect=RuntimeError("OpenAI 503")))
+        monkeypatch.setattr(llm_service, "_call_gemini", AsyncMock(return_value=expected_gemini))
+        monkeypatch.setattr(llm_service, "_call_anthropic", AsyncMock(side_effect=RuntimeError("Unused")))
+
+        res = asyncio.run(llm_service.parse_query("Football lovers in London UK"))
+        assert res.interest == "Football"
+        assert llm_service.stats["provider_used"] == "gemini"
+        assert llm_service.stats["provider_attempts"] == ["openai", "gemini"]
+
+        # When Gemini also fails, must fall back to Anthropic before heuristic
+        expected_claude = StructuredIntent(
+            interest="Cricket",
+            audience="Cricket lovers",
+            location=LocationDetails(city="Ahmedabad", country="India"),
+        )
+        monkeypatch.setattr(llm_service, "_call_gemini", AsyncMock(side_effect=TimeoutError("timeout")))
+        monkeypatch.setattr(llm_service, "_call_anthropic", AsyncMock(return_value=expected_claude))
+        res2 = asyncio.run(llm_service.parse_query("Cricket lovers in Ahmedabad India"))
+        assert res2.interest == "Cricket"
+        assert llm_service.stats["provider_used"] == "anthropic"
+        assert llm_service.stats["provider_attempts"] == ["openai", "gemini", "anthropic"]
+
+    def test_john_smith_and_john_doe_not_merged_on_generic_or_shared_email(self):
+        c1 = RawCandidate(
+            platform="LinkedIn",
+            name="John Smith",
+            location="London, UK",
+            profile_url="https://linkedin.com/in/johnsmith",
+            emails=["contact@acme.co.uk"],
+            social_links=[SocialLink(platform="LinkedIn", link="https://linkedin.com/in/johnsmith")],
+        )
+        c2 = RawCandidate(
+            platform="X",
+            name="John Doe",
+            location="London, UK",
+            profile_url="https://x.com/johndoe",
+            emails=["contact@acme.co.uk"],
+            social_links=[SocialLink(platform="X", link="https://x.com/johndoe")],
+        )
+        # Even with non-generic email, mismatched surnames cannot merge distinct full human names
+        c3 = RawCandidate(
+            platform="LinkedIn",
+            name="John Smith",
+            location="London, UK",
+            profile_url="https://linkedin.com/in/johnsmith2",
+            emails=["shared@acme.co.uk"],
+            social_links=[SocialLink(platform="LinkedIn", link="https://linkedin.com/in/johnsmith2")],
+        )
+        c4 = RawCandidate(
+            platform="X",
+            name="John Doe",
+            location="London, UK",
+            profile_url="https://x.com/johndoe2",
+            emails=["shared@acme.co.uk"],
+            social_links=[SocialLink(platform="X", link="https://x.com/johndoe2")],
+        )
+        assert len(deduplication_service.consolidate([c1, c2])) == 2
+        assert len(deduplication_service.consolidate([c3, c4])) == 2
+
+    def test_strict_relevance_threshold_drops_subthreshold_candidates(self, monkeypatch):
+        # Single weak signal (< 35 pts) must not leak into output via fallback
+        async def weak_search(query: str, num_results: int = 5):
+            if "x.com" in query.lower():
+                return [
+                    {
+                        "title": "Random Person (@randomp) / X",
+                        "link": "https://x.com/randomp",
+                        "snippet": "Generic personal feed with no topic or city.",
+                    }
+                ]
+            return []
+
+        monkeypatch.setattr("app.services.search_service.search_service.search", weak_search)
+        resp = client.post(
+            "/prospect-discovery",
+            json={"query": "Cricket lovers in Ahmedabad India"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total_prospects"] == 0
+        assert body["prospects"] == []
+
+    def test_search_status_distinguishes_errors_and_never_caches_failures(self, monkeypatch):
+        from app.config import settings
+
+        svc = SearchService()
+        monkeypatch.setattr(settings, "SEARCH_PROVIDER", "serper")
+        monkeypatch.setattr(settings, "SERPER_API_KEY", "test-key")
+
+        async def rate_limited_serper(q, n):
+            from app.services.search_service import SearchOutcome
+            return SearchOutcome(hits=[], status=SearchStatus.RATE_LIMITED, provider="serper")
+
+        async def timeout_ddg(q, n):
+            from app.services.search_service import SearchOutcome
+            return SearchOutcome(hits=[], status=SearchStatus.TIMEOUT, provider="ddg")
+
+        monkeypatch.setattr(svc, "_search_serper", rate_limited_serper)
+        monkeypatch.setattr(svc, "_search_ddg", timeout_ddg)
+
+        outcome = asyncio.run(svc.search_with_status("test query", 5))
+        assert outcome.status == SearchStatus.TIMEOUT
+        assert outcome.hits == []
+        assert len(svc._cache) == 0  # failed / empty search is never cached
+
+    def test_provider_health_present_and_tracks_rate_limits_and_timeouts(self, monkeypatch):
+        from app.platforms import ALL_PLATFORMS
+        from app.services.search_service import SearchOutcome
+
+        monkeypatch.setattr(
+            "app.services.search_service.search_service.search_with_status",
+            AsyncMock(return_value=SearchOutcome(hits=[], status=SearchStatus.RATE_LIMITED, provider="ddg")),
+        )
+        # Ensure .search isn't treated as instance monkeypatch
+        resp = client.post(
+            "/prospect-discovery",
+            json={"query": "Startup founders in London UK"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["provider_health"] is not None
+        assert body["provider_health"]["platforms_rate_limited"] == len(ALL_PLATFORMS)
+        assert body["provider_health"]["platforms_succeeded"] == 0
+
 
 

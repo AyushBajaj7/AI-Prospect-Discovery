@@ -50,6 +50,8 @@ _BOILERPLATE_SUBSTRINGS = (
     "page not found",
     "see photos and videos",
     "people on facebook",
+    "travel guide",
+    "news and updates",
 )
 
 # Fragments used only when deciding whether the prefix before '-' is boilerplate
@@ -92,9 +94,13 @@ def clean_name(raw_title: str, platform: str = "") -> str:
     # 4. Strip leading/trailing punctuation that may remain
     name = re.sub(r"^[\"\'\(\[\{]+|[\"\'\)\]\}]+$", "", name).strip()
 
-    # 5. Reject boilerplate titles, URL slugs, or invalid lengths
+    # 5. Reject boilerplate titles, truncated article titles (...), URL slugs, or invalid lengths
     lowered = name.lower()
     if len(name) < 2 or len(name) > 80:
+        return ""
+    if name.endswith("...") or name.endswith("…"):
+        return ""
+    if re.match(r"^20\d{2}\s+", name):  # year-prefixed editorial/article titles
         return ""
     if lowered in _BOILERPLATE_EXACT:
         return ""

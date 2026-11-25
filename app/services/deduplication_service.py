@@ -4,16 +4,15 @@ belong to the same real-world individual or business into a single Prospect.
 
 Matching priority (from most to least reliable):
   1. Exact profile URL (normalized)
-  2. Shared personal/verified email address (respecting role-prefix & name compatibility)
-  3. Shared public phone number (respecting name compatibility)
-  4. Shared platform handle (username) with compatible location
+  2. Shared personal (non-generic) email address + full/surname-initial compatibility
+  3. Shared public phone number + compatible full/surname-initial names
+  4. Shared verified platform handle (username) with compatible location
   5. Identical normalized full name with BOTH locations present & compatible
 
 Safety invariants:
-  * Never merge two different profiles on the same 1-per-person social network
-    (e.g. two distinct LinkedIn /in/ URLs are distinct people).
-  * Never merge unrelated multi-word human names solely via a shared role email
-    like cofounder@company.com or info@company.com found in a joint snippet.
+  * Never merge two different accounts on the same exclusive social network.
+  * Never merge unrelated individuals who only share a first name ("John Smith"
+    vs "John Doe") or a generic company email (info@, contact@, cofounder@).
 """
 from __future__ import annotations
 
@@ -25,18 +24,15 @@ from app.schemas import Prospect, RawCandidate, SocialLink
 
 logger = logging.getLogger(__name__)
 
-# Handles that are too generic to reliably identify a person
 _GENERIC_HANDLES: Set[str] = {
     "profile", "official", "page", "user", "admin", "info",
     "contact", "support", "help", "news", "home", "about",
 }
 
-# Social platforms where distinct profile URLs represent distinct accounts/people
 _EXCLUSIVE_SOCIAL_PLATFORMS: Set[str] = {
     "LinkedIn", "X", "Instagram", "Threads", "YouTube", "Facebook",
 }
 
-# Generic role email local-parts that can be shared across a team or snippet
 _GENERIC_EMAIL_PREFIXES: Set[str] = {
     "info", "hello", "contact", "support", "help", "admin", "team",
     "sales", "marketing", "office", "hi", "enquiries", "inquiries",
@@ -45,10 +41,6 @@ _GENERIC_EMAIL_PREFIXES: Set[str] = {
 
 
 class DeduplicationService:
-
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
 
     @staticmethod
     def _normalize_name(name: str) -> str:
@@ -59,15 +51,34 @@ class DeduplicationService:
     @classmethod
     def _names_plausibly_same_person(cls, name_a: str, name_b: str) -> bool:
         """
-        Return True if names share a meaningful token (e.g. surname 'patel' or
-        first name 'alex'), or match via first-initial + surname ('S. Patel' vs 'Sam Patel').
-        Rejects completely distinct names like 'Rahim Nathwani' vs 'Peter Elstrom'.
+        Strict name-compatibility check:
+          * Exact normalized names match ("john smith" == "john smith"), OR
+          * Same surname (last token) AND compatible first name or initial
+            ("Sam Patel" vs "S. Patel" -> True), while ("John Smith" vs "John Doe" -> False).
         """
-        tokens_a = [t for t in cls._normalize_name(name_a).split() if len(t) >= 2]
-        tokens_b = [t for t in cls._normalize_name(name_b).split() if len(t) >= 2]
+        tokens_a = cls._normalize_name(name_a).split()
+        tokens_b = cls._normalize_name(name_b).split()
         if not tokens_a or not tokens_b:
-            return True  # insufficient name evidence to contradict
-        return bool(set(tokens_a) & set(tokens_b))
+            return False
+        if tokens_a == tokens_b:
+            return True
+        if len(tokens_a) >= 2 and len(tokens_b) >= 2:
+            first_a, last_a = tokens_a[0], tokens_a[-1]
+            first_b, last_b = tokens_b[0], tokens_b[-1]
+            if last_a != last_b or len(last_a) < 2:
+                return False
+            # Match either exact first name or initial match ("s" vs "sam")
+            return (
+                first_a == first_b
+                or (len(first_a) == 1 and first_b.startswith(first_a))
+                or (len(first_b) == 1 and first_a.startswith(first_b))
+            )
+        # Single-word entity/brand matching a longer brand name containing it
+        if len(tokens_a) == 1 and len(tokens_a[0]) >= 3:
+            return tokens_a[0] in tokens_b
+        if len(tokens_b) == 1 and len(tokens_b[0]) >= 3:
+            return tokens_b[0] in tokens_a
+        return False
 
     @staticmethod
     def _location_tokens(loc: str) -> Set[str]:
@@ -77,8 +88,8 @@ class DeduplicationService:
     def _locations_compatible(cls, loc1: Optional[str], loc2: Optional[str]) -> bool:
         """
         Return True when locations share at least one whole token/segment
-        or when one location is missing. Avoids naive substring collisions
-        like 'India' matching 'Indiana, USA'.
+        or when one location is missing. Avoids substring collisions like
+        'India' matching 'Indiana, USA'.
         """
         if not loc1 or not loc2:
             return True
@@ -93,7 +104,7 @@ class DeduplicationService:
         )
 
     def _conflicts(self, a: RawCandidate, b: RawCandidate) -> bool:
-        """Return True if two candidates demonstrably represent different accounts."""
+        """Return True if two candidates demonstrably represent different people/accounts."""
         url_a = a.profile_url.lower()
         url_b = b.profile_url.lower()
         if url_a != url_b and a.platform == b.platform and a.platform in _EXCLUSIVE_SOCIAL_PLATFORMS:
@@ -110,47 +121,47 @@ class DeduplicationService:
         if url_a == url_b:
             return True
 
-        # Guard: distinct URLs on the same exclusive social network belong to distinct accounts
+        # Conflict guard
         if self._conflicts(a, b):
             return False
 
         names_compatible = self._names_plausibly_same_person(a.name, b.name)
-
-        # 2. Shared email
-        emails_a = {e.lower() for e in a.emails}
-        emails_b = {e.lower() for e in b.emails}
-        shared_emails = emails_a & emails_b
-        if shared_emails and self._locations_compatible(a.location, b.location):
-            for em in shared_emails:
-                local_part = em.split("@")[0]
-                if local_part in _GENERIC_EMAIL_PREFIXES:
-                    # Generic role email requires matching/compatible names
-                    if names_compatible:
-                        return True
-                elif names_compatible or (
-                    (a.metadata.get("handle") or "").lower()
-                    and (a.metadata.get("handle") or "").lower()
-                    == (b.metadata.get("handle") or "").lower()
-                ):
-                    return True
-
-        # 3. Shared phone
-        phones_a = {re.sub(r"\D", "", p) for p in a.phones if p}
-        phones_b = {re.sub(r"\D", "", p) for p in b.phones if p}
-        if phones_a and phones_b and (phones_a & phones_b) and names_compatible:
-            return True
-
-        # 4. Same platform handle (non-trivial and locations compatible)
         handle_a = (a.metadata.get("handle") or "").lower()
         handle_b = (b.metadata.get("handle") or "").lower()
-        if (
+        same_handle = bool(
             handle_a
             and handle_b
             and handle_a == handle_b
             and len(handle_a) >= 4
             and handle_a not in _GENERIC_HANDLES
-            and self._locations_compatible(a.location, b.location)
-        ):
+        )
+
+        # 2. Shared email (generic company emails never establish personal identity alone)
+        emails_a = {e.lower() for e in a.emails}
+        emails_b = {e.lower() for e in b.emails}
+        shared_emails = emails_a & emails_b
+        if shared_emails:
+            exact_full_name = (
+                self._normalize_name(a.name) == self._normalize_name(b.name)
+                and len(self._normalize_name(a.name).split()) >= 2
+            )
+            for em in shared_emails:
+                local_part = em.split("@")[0]
+                if local_part in _GENERIC_EMAIL_PREFIXES:
+                    if (exact_full_name and self._locations_compatible(a.location, b.location)) or same_handle:
+                        return True
+                elif names_compatible or same_handle:
+                    return True
+
+        # 3. Shared phone (requires compatible name or verified handle)
+        phones_a = {re.sub(r"\D", "", p) for p in a.phones if p}
+        phones_b = {re.sub(r"\D", "", p) for p in b.phones if p}
+        if phones_a and phones_b and (phones_a & phones_b):
+            if names_compatible or same_handle:
+                return True
+
+        # 4. Same platform handle (non-trivial and locations compatible)
+        if same_handle and self._locations_compatible(a.location, b.location):
             return True
 
         # 5. Exact full-name + BOTH locations verified and compatible
@@ -169,15 +180,8 @@ class DeduplicationService:
 
         return False
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
     def consolidate(self, candidates: List[RawCandidate]) -> List[Prospect]:
-        """
-        Cluster candidates with transitive closure into identity groups, then
-        produce one Prospect per cluster with merged social links.
-        """
+        """Cluster candidates with transitive closure and conflict guards."""
         if not candidates:
             return []
 

@@ -7,9 +7,20 @@ so that the auto-generated OpenAPI documentation is accurate and complete.
 from __future__ import annotations
 
 import re
+from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
+
+
+class SearchStatus(str, Enum):
+    """Explicit outcome classification for each upstream platform search call."""
+
+    SUCCESS = "SUCCESS"
+    NO_RESULTS = "NO_RESULTS"
+    RATE_LIMITED = "RATE_LIMITED"
+    TIMEOUT = "TIMEOUT"
+    PROVIDER_ERROR = "PROVIDER_ERROR"
 
 
 # ---------------------------------------------------------------------------
@@ -33,11 +44,9 @@ class ProspectQueryRequest(BaseModel):
     @field_validator("query")
     @classmethod
     def sanitize_query(cls, v: str) -> str:
-        """Strip leading/trailing whitespace and collapse internal whitespace."""
-        v = v.strip()
-        # Collapse multiple spaces / tabs / newlines to a single space
+        """Strip control chars, collapse internal whitespace, require alpha chars."""
+        v = re.sub(r"[\x00-\x1f\x7f]+", " ", v).strip()
         v = re.sub(r"\s+", " ", v)
-        # Reject queries that are purely punctuation or numbers
         if not re.search(r"[a-zA-Z]", v):
             raise ValueError("Query must contain at least one letter.")
         return v
@@ -48,12 +57,12 @@ class ProspectQueryRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 class LocationDetails(BaseModel):
-    city: Optional[str] = None
-    state: Optional[str] = None
-    country: Optional[str] = None
+    city: Optional[str] = Field(default=None, max_length=80)
+    state: Optional[str] = Field(default=None, max_length=80)
+    country: Optional[str] = Field(default=None, max_length=80)
 
     def formatted(self) -> str:
-        """Human-readable location string; returns None-safe empty string."""
+        """Human-readable location string; returns empty string when unset."""
         parts = [p for p in [self.city, self.state, self.country] if p]
         return ", ".join(parts)
 
@@ -61,19 +70,23 @@ class LocationDetails(BaseModel):
 class StructuredIntent(BaseModel):
     interest: Optional[str] = Field(
         None,
-        description="Primary topic or interest, e.g. Football, Cricket, Tech.",
+        max_length=100,
+        description="Primary topic or interest, e.g. Football, Cricket, Startups.",
     )
     audience: str = Field(
         ...,
+        min_length=1,
+        max_length=120,
         description="Target audience / profession, e.g. 'Football lovers'.",
     )
     location: LocationDetails = Field(default_factory=LocationDetails)
     target_type: Literal["individual", "business"] = Field(
         default="individual",
-        description="Whether the target is an individual person or a business entity.",
+        description="Whether targeting individual persons/owners or organization entities.",
     )
     keywords: List[str] = Field(
         default_factory=list,
+        max_length=12,
         description="Supplemental keywords for platform-level search queries.",
     )
 
@@ -88,7 +101,7 @@ class SocialLink(BaseModel):
     platform: str = Field(
         ...,
         description=(
-            "Platform name: LinkedIn, X, YouTube, Instagram, Facebook, "
+            "Platform or contact channel: LinkedIn, X, YouTube, Instagram, Facebook, "
             "Threads, WhatsApp, Email, Phone, or Google."
         ),
     )
@@ -111,12 +124,24 @@ class Prospect(BaseModel):
     )
     location: Optional[str] = Field(
         None,
-        description="Geographical location string, e.g. 'London, UK'.",
+        description="Geographical location string when confirmed in evidence, e.g. 'London, UK'.",
     )
     social_link: List[SocialLink] = Field(
         default_factory=list,
         description="All consolidated public social profiles and contact links.",
     )
+
+
+class ProviderHealthSummary(BaseModel):
+    """Observability summary distinguishing empty results from upstream errors."""
+
+    llm_provider: str = "heuristic_fallback"
+    platforms_succeeded: int = 0
+    platforms_no_results: int = 0
+    platforms_rate_limited: int = 0
+    platforms_timed_out: int = 0
+    platforms_errored: int = 0
+    platform_outcomes: Dict[str, SearchStatus] = Field(default_factory=dict)
 
 
 class ProspectDiscoveryResponse(BaseModel):
@@ -132,6 +157,10 @@ class ProspectDiscoveryResponse(BaseModel):
     prospects: List[Prospect] = Field(
         default_factory=list,
         description="Ordered list of discovered prospect records.",
+    )
+    provider_health: Optional[ProviderHealthSummary] = Field(
+        default=None,
+        description="Per-platform search status and LLM provider telemetry.",
     )
 
 
@@ -156,5 +185,5 @@ class RawCandidate(BaseModel):
     whatsapp_links: List[str] = Field(default_factory=list)
     social_links: List[SocialLink] = Field(default_factory=list)
     relevance_score: float = 0.0
-    # Arbitrary per-adapter metadata (e.g. extracted handle, score breakdown)
+    verification_status: Literal["verified_profile", "public_web", "partial"] = "public_web"
     metadata: Dict[str, Any] = Field(default_factory=dict)

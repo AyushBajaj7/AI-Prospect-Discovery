@@ -1,22 +1,18 @@
 """
 WhatsApp public contact-link adapter.
 
-Discovers publicly published wa.me links associated with individuals or
-businesses that match the query. No private data is accessed.
+Discovers publicly published wa.me / send links associated with matching
+prospects and normalizes links to official digit-only `https://wa.me/<digits>`.
 """
 from __future__ import annotations
 
-import logging
 from typing import List
 
 from app.platforms.base import BasePlatformAdapter
 from app.platforms.contacts import extract_all_contacts
 from app.schemas import RawCandidate, SocialLink, StructuredIntent
-from app.services.search_service import search_service
 from app.utils.normalizers import clean_name
-from app.utils.validators import clean_url, is_valid_profile_url
-
-logger = logging.getLogger(__name__)
+from app.utils.validators import is_valid_profile_url, normalize_whatsapp_url
 
 
 class WhatsAppAdapter(BasePlatformAdapter):
@@ -28,31 +24,30 @@ class WhatsAppAdapter(BasePlatformAdapter):
         return f'{audience} {loc} ("wa.me" OR "api.whatsapp.com/send")'.strip()
 
     def validate_url(self, url: str) -> bool:
-        return is_valid_profile_url("WhatsApp", url)
+        norm = normalize_whatsapp_url(url)
+        return bool(norm and is_valid_profile_url("WhatsApp", norm))
 
     async def discover(
         self, intent: StructuredIntent, max_results: int = 5
     ) -> List[RawCandidate]:
         query = self.build_query(intent)
-        try:
-            hits = await search_service.search(query, num_results=max_results)
-        except Exception as exc:
-            logger.warning("WhatsApp search error: %s", type(exc).__name__)
-            return []
+        hits, search_status = await self._execute_search(query, max_results)
+        self._record_outcome(self.platform_name, search_status)
 
         candidates: List[RawCandidate] = []
 
         for hit in hits:
             title = hit.get("title", "")
             snippet = hit.get("snippet", "")
-            page_url = clean_url(hit.get("link", ""))
+            page_url = hit.get("link", "")
             combined = f"{title} {snippet} {page_url}"
 
             contacts = extract_all_contacts(combined)
-            wa_links = [clean_url(wa) for wa in contacts["whatsapp_links"] if self.validate_url(clean_url(wa))]
+            wa_links = list(contacts["whatsapp_links"])
 
-            if self.validate_url(page_url) and page_url not in wa_links:
-                wa_links.append(page_url)
+            page_wa = normalize_whatsapp_url(page_url)
+            if page_wa and is_valid_profile_url("WhatsApp", page_wa) and page_wa not in wa_links:
+                wa_links.append(page_wa)
 
             if not wa_links:
                 continue
@@ -82,6 +77,7 @@ class WhatsAppAdapter(BasePlatformAdapter):
                     phones=contacts["phones"],
                     whatsapp_links=wa_links,
                     social_links=social_links,
+                    verification_status="verified_profile",
                 )
             )
 

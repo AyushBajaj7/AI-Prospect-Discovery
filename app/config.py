@@ -13,7 +13,6 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
-        # Never display secrets in repr / logs
         secrets_dir=None,
     )
 
@@ -21,41 +20,44 @@ class Settings(BaseSettings):
     # App metadata
     # ------------------------------------------------------------------ #
     APP_NAME: str = "AI-Powered Multi-Platform Prospect Discovery API"
-    APP_VERSION: str = "1.0.0"
+    APP_VERSION: str = "1.1.0"
 
     # ------------------------------------------------------------------ #
-    # Server
+    # Server & Security
     # ------------------------------------------------------------------ #
     PORT: int = Field(default=4000, ge=1, le=65535)
     HOST: str = "0.0.0.0"
     DEBUG: bool = False
 
-    # Allowed CORS origins – defaults to localhost only for safety.
-    # Set to a comma-separated list of origins in production, e.g.
-    #   CORS_ORIGINS=https://app.example.com,https://admin.example.com
+    # Allowed CORS origins – explicit origins only (never wildcard with credentials).
     CORS_ORIGINS: str = "http://localhost:4000,http://127.0.0.1:4000"
+
+    # Per-IP sliding-window endpoint rate limiting (process-local; back with
+    # Redis or API gateway rate-limiting in multi-worker deployments).
+    RATE_LIMIT_REQUESTS: int = Field(default=30, ge=1, le=10000)
+    RATE_LIMIT_WINDOW_SECONDS: int = Field(default=60, ge=1, le=3600)
 
     # ------------------------------------------------------------------ #
     # Search providers
     # ------------------------------------------------------------------ #
-    # Priority: serper > brave > ddg (free, no key required)
+    # Priority: serper -> brave -> ddg (free fallback, no key required)
     SEARCH_PROVIDER: str = "auto"
     SERPER_API_KEY: Optional[str] = None
     BRAVE_API_KEY: Optional[str] = None
 
     # ------------------------------------------------------------------ #
-    # LLM providers – auto-detects first available key
+    # LLM providers – auto-detects and falls back across configured keys
     # ------------------------------------------------------------------ #
     LLM_PROVIDER: str = "auto"
 
     GEMINI_API_KEY: Optional[str] = None
-    GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_MODEL: str = "gemini-3.5-flash-lite"
 
     OPENAI_API_KEY: Optional[str] = None
-    OPENAI_MODEL: str = "gpt-4o-mini"
+    OPENAI_MODEL: str = "gpt-6-luna"
 
     ANTHROPIC_API_KEY: Optional[str] = None
-    ANTHROPIC_MODEL: str = "claude-3-5-haiku-20241022"
+    ANTHROPIC_MODEL: str = "claude-haiku-5-5"
 
     # ------------------------------------------------------------------ #
     # Discovery pipeline tuning
@@ -63,13 +65,12 @@ class Settings(BaseSettings):
     MAX_RESULTS_PER_PLATFORM: int = Field(default=5, ge=1, le=20)
     SEARCH_TIMEOUT_SECONDS: int = Field(default=15, ge=5, le=60)
     SEARCH_MAX_CONCURRENCY: int = Field(default=4, ge=1, le=10)
-    # Minimum 0–100 score to include a prospect in the final results
+    # Minimum 0–100 score required to include a prospect in final results
     RELEVANCE_THRESHOLD: float = Field(default=35.0, ge=0.0, le=100.0)
 
     # ------------------------------------------------------------------ #
-    # In-process cache
+    # Bounded in-process TTL caches
     # ------------------------------------------------------------------ #
-    # TTL in seconds for query-intent & search caches (default: 1 hour)
     CACHE_TTL_SECONDS: int = Field(default=3600, ge=60)
     CACHE_MAX_SIZE: int = Field(default=1000, ge=50, le=50000)
 

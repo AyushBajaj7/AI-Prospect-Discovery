@@ -1,75 +1,81 @@
 # AI-Powered Multi-Platform Prospect Discovery API
 
-[![Python Version](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.14-blue.svg)](https://www.python.org/)
+[![CI Matrix](https://github.com/AyushBajaj7/AI-Prospect-Discovery/actions/workflows/ci.yml/badge.svg)](https://github.com/AyushBajaj7/AI-Prospect-Discovery/actions/workflows/ci.yml)
+[![Python Versions](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.14-blue.svg)](.github/workflows/ci.yml)
 [![Framework](https://img.shields.io/badge/Framework-FastAPI-green.svg)](https://fastapi.tiangolo.com/)
 [![Validation](https://img.shields.io/badge/Validation-Pydantic%20v2-orange.svg)](https://docs.pydantic.dev/)
-[![Tests](https://img.shields.io/badge/Tests-Pytest%20Passing-brightgreen.svg)](https://docs.pytest.org/)
+[![Tests](https://img.shields.io/badge/Tests-136%20Passing-brightgreen.svg)](tests/test_prospect_discovery.py)
 [![License](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)
 
-An intelligent, modular prospect discovery engine built with **FastAPI**, **Pydantic v2**, and modern **LLM integrations** (Google Gemini, OpenAI, Anthropic). The engine accepts natural-language search queries, understands user intent, discovers publicly accessible profiles across 9 platforms, validates identities and public contact points, removes duplicates, scores relevance, and returns clean, structured JSON.
+An intelligent, modular prospect discovery engine built with **FastAPI**, **Pydantic v2**, and modern structured-output **LLM SDKs** (`google-genai`, `openai`, `anthropic`). It accepts natural-language queries, parses structured intent with multi-provider fallback, discovers publicly accessible profiles across **9 discovery platforms**, normalizes and validates public contact channels (`Email`, `Phone`, `WhatsApp`), filters strictly by weighted relevance, deduplicates across platforms, and returns clean JSON with observable `provider_health` telemetry.
 
 ---
 
 ## 1. Architecture & Processing Flow
 
-The application decouples discovery, extraction, validation, relevance scoring, and entity consolidation into modular components.
-
 ```
                           User Natural Language Query
                                       │
                                       ▼
-                        Query Understanding Layer (LLM)
-             (Extracts audience, interest, location, target type)
+                     Input Validation & Rate Limiting
+              (64 KB ASGI cap, per-IP sliding window, CORS)
                                       │
                                       ▼
-                           Search Query Generator
-                   (Generates targeted queries for 9 platforms)
+                 Query Understanding Layer (LLM Fallback Chain)
+        (OpenAI GPT-6 Luna -> Gemini 3.5 Flash-Lite -> Claude Haiku 5.5
+                 -> Offline Deterministic + Dynamic NLP Fallback)
                                       │
                                       ▼
-               Concurrent Multi-Platform Public Discovery
-   ┌─────────┬─────────┬─────────┬─────────┬──────────┬──────────┬──────────┬─────────┐
-   │ Google  │LinkedIn │    X    │ YouTube │Instagram │ Facebook │ Threads  │WhatsApp │
-   └────┬────┴────┬────┴────┬────┴────┬────┴────┬─────┴────┬─────┴────┬─────┴────┬────┘
-        │         │         │         │         │          │          │          │
-        └─────────┴─────────┴─────────┴────┬────┴──────────┴──────────┴──────────┘
-                                           ▼
-                            Profile Extraction & Validation
-                       (Validates URLs, cleans names, extracts
-                        public email, phone, & WhatsApp links)
-                                           │
-                                           ▼
-                               Relevance Scoring (0 - 100)
-                     (Audience: 40 | Interest: 20 | Location: 25 | Evidence: 15)
-                                           │
-                                           ▼
-                       Duplicate Detection & Entity Resolution
-                     (Clusters profiles by URL, handle, email,
-                      phone, and normalized name + location)
-                                           │
-                                           ▼
-                             Structured JSON API Response
-                       (FastAPI POST http://localhost:4000/prospect-discovery)
+                  Sanitized Search Query Generator (9 Platforms)
+          (Strips quotes & search operators before constructing queries)
+                                      │
+                                      ▼
+              Bounded Concurrent Discovery (HTTPX Lifespan Pool)
+  ┌────────┬──────────┬───┬─────────┬─────────┬────────┬───────┬────────┬───────┐
+  │ Google │ LinkedIn │ X │ YouTube │Instagram│Facebook│Threads│WhatsApp│ Email │
+  └───┬────┴────┬─────┴─┬─┴────┬────┴────┬────┴───┬────┴───┬───┴────┬───┴───┬───┘
+      └─────────┴───────┴──────┴─────────┴────────┴────────┴────────┴───────┘
+                                      │
+                                      ▼
+                     Profile Extraction & Contact Validation
+          (Strict URL rules, verified names, RFC Email, E.164 Phone,
+           officially normalized WhatsApp links without '+' prefix)
+                                      │
+                                      ▼
+                      Strict Relevance Filtering (0 – 100)
+                (Audience: 40 | Interest: 20 | Location: 25 | Evidence: 15)
+                                      │
+                                      ▼
+                  Conflict-Aware Deduplication & Consolidation
+            (Same-platform conflict guard, surname/initial rules,
+             no generic-email cross-person merges)
+                                      │
+                                      ▼
+               Structured JSON Response + provider_health Telemetry
+                 (FastAPI POST http://localhost:4000/prospect-discovery)
 ```
 
 ---
 
-## 2. Supported Discovery Platforms
+## 2. Supported Discovery Platforms & Contact Channels
 
-The engine supports all 9 platforms specified in the practical test assessment:
+All **9 discovery platforms** specified in the assessment run concurrently with explicit `SearchStatus` tracking (`SUCCESS`, `NO_RESULTS`, `RATE_LIMITED`, `TIMEOUT`, `PROVIDER_ERROR`):
 
 | No. | Platform | Discovery Target | Methodology & Validation |
 |:---:|---|---|---|
-| **1** | **Google** | Public websites & portfolios | Discovers official personal portfolios, founder sites, and about pages. Filters out generic aggregators. |
-| **2** | **LinkedIn** | Public professional profiles | Targets `site:linkedin.com/in/`. Validates against post/company URLs; extracts headline & title. |
-| **3** | **X (Twitter)** | Public user profiles | Targets `site:x.com` excluding `/status` and `/hashtag`. Extracts bio, handles, and verification. |
-| **4** | **YouTube** | Public creator channels | Targets `site:youtube.com/@` and channel pages. Extracts channel name and creator links. |
-| **5** | **Instagram** | Public profiles | Targets `site:instagram.com` excluding post (`/p/`) and reel URLs. Extracts handles and bio info. |
-| **6** | **WhatsApp** | Public contact links | Discovers public `wa.me/<phone>` and `api.whatsapp.com/send?phone=...` links published in web profiles. |
-| **7** | **Facebook** | Public profiles & pages | Targets public creator/business pages and `/people/` profiles excluding login, group, and story URLs. |
-| **8** | **Email** | Public email addresses | Dedicated `EmailAdapter` + snippet extractor extracting valid RFC-compliant emails (`mailto:...`) with bogus-domain filtering. |
-| **9** | **Threads** | Public profiles | Targets `site:threads.net/@` profiles. Validates usernames and cross-links. |
+| **1** | **Google** | Personal websites & portfolios | Targets personal sites and `about.me` pages while excluding aggregators, news articles, and event directories. |
+| **2** | **LinkedIn** | Public professional profiles | Targets `site:linkedin.com/in/`. Blocks posts, company pages, jobs, and login URLs. |
+| **3** | **X (Twitter)** | Public user profiles | Targets `site:x.com` excluding `/status`, `/hashtag`, `/explore`, and `/login`. |
+| **4** | **YouTube** | Public creator channels | Targets `site:youtube.com` (`@handle`, `/channel/`, `/c/`, `/user/`) excluding `/watch`, `/shorts`, `/playlist`. |
+| **5** | **Instagram** | Public profiles | Targets `site:instagram.com` excluding `/p/`, `/reel`, `/stories`, `/explore`. |
+| **6** | **WhatsApp** | Public contact links | Discovers public `wa.me/` and `api.whatsapp.com/send` links and normalizes them to `https://wa.me/<digits>` (no `+`). |
+| **7** | **Facebook** | Public profiles & pages | Targets public creator pages, `/people/<name>/<id>`, and `profile.php?id=...` excluding groups/login/events. |
+| **8** | **Email** | Public email addresses | Dedicated `EmailAdapter` + snippet extractor finding RFC-valid `mailto:` contacts with bogus-domain rejection. |
+| **9** | **Threads** | Public profiles | Targets `site:threads.net/@<handle>` excluding `/post/`. |
 
-> **Platform API Limitations & Design Choice:** Major social platforms (LinkedIn, Instagram, Facebook, X, Threads) do not provide open, unauthenticated public people-search REST APIs and restrict programmatic scraping behind authentication walls. In full compliance with platform terms and privacy boundaries, this engine never bypasses login gates or accesses private profiles; instead, it discovers **publicly search-indexed profile URLs and snippets** via authorized search providers (Serper, Brave Search API, or DuckDuckGo fallback) with strict rate-limit handling.
+> **Contact Links Note:** Per the assessment output rules, publicly discovered **`Phone`** numbers (`tel:+...`) are also extracted and included inside each prospect's `social_link` array alongside `Email` (`mailto:...`) and `WhatsApp`. `Phone` is an extracted contact channel, not a tenth discovery platform.
+>
+> **Platform Limitations:** Major social networks (LinkedIn, Instagram, Facebook, X, Threads) do not offer unauthenticated people-search APIs. Rather than bypassing logins or scraping private pages, this engine queries **search-indexed public profiles** via Serper, Brave Search API, or DuckDuckGo fallback (limited to 4 concurrent queries via semaphore).
 
 ---
 
@@ -90,306 +96,236 @@ Content-Type: application/json
 }
 ```
 
-### Success Response (`200 OK`)
+### Success Response Structure (`200 OK`)
+
+*(Illustrative schema example showing consolidated multi-platform social links and contact links; see Section 8 for actual live query outputs.)*
 
 ```json
 {
   "success": true,
   "query": "Startup founders in London UK",
-  "total_prospects": 2,
+  "total_prospects": 1,
   "prospects": [
     {
       "name": "Alex Morgan",
       "location": "London, UK",
       "social_link": [
-        {
-          "platform": "LinkedIn",
-          "link": "https://www.linkedin.com/in/alexmorgan"
-        },
-        {
-          "platform": "X",
-          "link": "https://x.com/alexmorgan"
-        },
-        {
-          "platform": "Email",
-          "link": "mailto:alex@techventures.co"
-        },
-        {
-          "platform": "WhatsApp",
-          "link": "https://wa.me/+442079460991"
-        }
-      ]
-    },
-    {
-      "name": "Sarah Jenkins",
-      "location": "London, UK",
-      "social_link": [
-        {
-          "platform": "YouTube",
-          "link": "https://youtube.com/@sarahjenkins"
-        },
-        {
-          "platform": "Threads",
-          "link": "https://threads.net/@sarahjenkins"
-        }
+        { "platform": "LinkedIn", "link": "https://www.linkedin.com/in/alexmorgan" },
+        { "platform": "X", "link": "https://x.com/alexmorgan" },
+        { "platform": "Email", "link": "mailto:alex@techventures.co" },
+        { "platform": "Phone", "link": "tel:+44 20 7946 0991" },
+        { "platform": "WhatsApp", "link": "https://wa.me/442079460991" }
       ]
     }
-  ]
+  ],
+  "provider_health": {
+    "llm_provider": "openai",
+    "platforms_succeeded": 7,
+    "platforms_no_results": 2,
+    "platforms_rate_limited": 0,
+    "platforms_timed_out": 0,
+    "platforms_errored": 0,
+    "platform_outcomes": {
+      "LinkedIn": "SUCCESS",
+      "X": "SUCCESS",
+      "Google": "SUCCESS"
+    }
+  }
 }
 ```
 
 ### Error Responses
 
-- **422 Unprocessable Entity**: When request payload is empty, whitespace-only, contains no alphabetic characters, or does not conform to schema.
-- **413 Request Entity Too Large**: When request body exceeds the 64 KB security limit.
-- **500 Internal Server Error**: Sanitized error response returning a unique `request_id` without exposing internal stack traces or implementation details.
+- **400 Bad Request**: Malformed `Content-Length` header.
+- **413 Request Entity Too Large**: Declared or chunked/streamed body exceeding 64 KB.
+- **422 Unprocessable Entity**: Empty, whitespace-only, non-alphabetic, or schema-invalid query.
+- **429 Too Many Requests**: Per-IP sliding-window rate limit exceeded (returns `Retry-After` and `X-Request-ID`).
+- **500 Internal Server Error**: Sanitized error returning a `request_id` without exposing stack traces.
 
 ---
 
 ## 4. Security & Production Hardening
 
-This application incorporates enterprise-grade security and reliability patterns designed to address common vulnerabilities:
-
-| Category | Security Measure | Implementation Details |
-|---|---|---|
-| **CORS Protection** | Restricted Origin Allowlist | CORS is strictly bound to explicit origins configured via `CORS_ORIGINS` (defaulting to localhost). `allow_credentials` is set to `False` to prevent credential-stuffing and cross-site request forgery. Wildcard (`*`) with credentials is explicitly prohibited. |
-| **Information Disclosure** | Error Sanitization | Stack traces, raw system exceptions, and file paths are never returned to API callers. Errors return a generic safe message and a unique `request_id` (`X-Request-ID` header) that correlates with secure server-side logs. |
-| **DoS Prevention** | Bounded Payload & Cache Limits | Pure ASGI `BodySizeLimitMiddleware` rejects both declared and chunked/streaming bodies > 64 KB (returning `413` with `X-Request-ID`), returns `400` for malformed `Content-Length`, and LRU+TTL caches bound memory usage. |
-| **Anti-SSRF & URL Hygiene** | Safe Host Validation | Rejects private/loopback/link-local IPs (`127.0.0.1`, `169.254.*`, `localhost`), aggregator domains (`google.*`, `wikipedia.org`), non-HTTP schemes, and strips tracking parameters (`utm_*`, `fbclid`, `igsh`, `si`, `trk`). |
-| **Input Sanitization** | Strict Pydantic v2 Validation | `ProspectQueryRequest` enforces length constraints (3–500 chars), collapses whitespace, and rejects queries lacking alphabetic characters. |
-| **Secret Management** | Safe Logging & `.dockerignore` | API keys load via Pydantic Settings from `.env` (excluded via `.gitignore` and `.dockerignore`); zero credentials are logged or baked into Docker images running as non-root `appuser`. |
-| **Anti-Fabrication** | Strict Evidence & Contact Rules | Locations are extracted strictly from confirmed text (`null` when unconfirmed); emails reject bogus domains (`example.com`, `test.com`); phones require formatting / `+` and reject date/year ranges (e.g., `2020-2025`). |
+| Security Control | Implementation Details |
+|---|---|
+| **Prompt & Search Operator Injection** | System prompts are passed via dedicated SDK system roles (`system_instruction` / `system`), and all parsed `StructuredIntent` fields pass through `sanitize_search_term()` to strip `site:`, `inurl:`, `-site:`, `OR`, quotes, and control characters before query generation. |
+| **Endpoint Rate Limiting** | Pure ASGI `RateLimitMiddleware` enforces per-client-IP sliding-window limits (`RATE_LIMIT_REQUESTS` / `RATE_LIMIT_WINDOW_SECONDS`) returning `429` + `Retry-After`. *(Process-local memory protects single instances; pair with Redis or gateway rate limiting in multi-worker clusters.)* |
+| **Payload Size Protection** | Pure ASGI `BodySizeLimitMiddleware` enforces a strict 64 KB cap on both `Content-Length` headers and chunked/streaming bodies. |
+| **CORS & Error Sanitization** | CORS uses an explicit `CORS_ORIGINS` allowlist (`allow_credentials=False`). Exception handlers return sanitized messages correlated via `X-Request-ID`. |
+| **Host Validation & SSRF Posture** | The engine never fetches untrusted candidate profile URLs over HTTP (only fixed upstream Serper/Brave/DDG endpoints are contacted). Additionally, `is_valid_profile_url()` blocks private/loopback/link-local IPv4 and IPv6 literals (`127.0.0.1`, `[::1]`, `[fe80::1]`, `[fc00::1]`). *(If external profile-page fetching is added later, DNS resolution, rebinding checks, and redirect revalidation must be added.)* |
+| **ReDoS & Bounded Scanning** | Contact regexes avoid nested unbounded quantifiers and cap input text scanning to 10,000 characters (`_MAX_SCAN_CHARS`). |
+| **Contact & Evidence Integrity** | Emails reject bogus domains (`example.com`, `test.com`); phones reject dates/year ranges (`2020-2025`); WhatsApp links strip `+` and formatting (`https://wa.me/<digits>`); locations remain `null` unless confirmed in text. |
 
 ---
 
 ## 5. Entity Resolution & Duplicate Detection
 
-Prospects often have identities across multiple platforms. Our engine consolidates these without merging distinct individuals with similar names.
-
-### Matching Priority
-1. **Exact Profile URL Match**: Identical normalized profile URLs are unified.
-2. **Contact Evidence Match**: Shared public email address or telephone number guarantees entity linkage.
-3. **Cross-Platform Handle Match**: Identical username handles across platforms (e.g. `@johndoe` on X, Instagram, and YouTube) paired with compatible locations.
-4. **Normalized Multi-Word Name + Location**: Strict multi-word full-name match combined with non-conflicting geographical locations.
-
-### Consolidation Guarantees
-- Single clean profile record per person.
-- All discovered social links and contact points (`mailto:`, `tel:`, `https://wa.me/`) merged into a unified `social_link` array without duplicates.
-- Most descriptive geographical location retained.
+1. **Exact Normalized Profile URL**: Unifies identical URLs after tracking-parameter stripping.
+2. **Conflict Guard (Exclusive Platforms)**: Two different accounts on the same social platform (`LinkedIn` + `LinkedIn`, `X` + `X`, etc.) are never merged—even transitively—preventing different individuals from collapsing together.
+3. **Personal Email Match**: Shared non-generic emails merge only when names match via exact full name or surname + initial (`Sam Patel` + `S. Patel`). Generic company addresses (`info@`, `contact@`, `cofounder@`) never link distinct people such as `John Smith` vs `John Doe`.
+4. **Verified Phone / Platform Handle + Location**: Compatible tokens only (`India` does not match `Indiana, USA`).
+5. **Exact Full Name + Both Verified Locations**: Multi-word full name match with non-conflicting verified locations on both candidates.
 
 ---
 
 ## 6. Relevance Scoring Algorithm
 
-To avoid polluting results with generic or irrelevant search hits, each candidate is evaluated against a 100-point weighted rubric:
-
 $$\text{Score} = \text{Audience Match (40)} + \text{Interest Match (20)} + \text{Location Match (25)} + \text{Evidence Quality (15)}$$
 
-- **Audience Match (40 pts)**: Presence of profession/role keywords (e.g., founder, CEO, owner, coach) or semantic synonyms.
-- **Interest Match (20 pts)**: Presence of domain topic keywords (e.g., Football, Cricket, Tech, Marketing, Hospitality).
-- **Location Match (25 pts)**: City match (15 pts), State match (5 pts), Country match (5 pts).
-- **Evidence Quality (15 pts)**: Verified URL format (+5 pts), multi-word verified name (+5 pts), public contact details found (+5 pts).
-
-Candidates scoring below the configurable `RELEVANCE_THRESHOLD` (default: `35.0`) are filtered out.
+Only candidates scoring `>= RELEVANCE_THRESHOLD` (default `35.0`) are returned. Low-scoring candidates (`< 35.0`) are never leaked into results via sub-threshold fallbacks.
 
 ---
 
-## 7. LLM Model Research – Cost, Speed, and Accuracy
+## 7. LLM & Search API Research – Cost, Speed, and Accuracy
 
-As required by Section 8 of the assessment, we compared three major LLM providers for structured JSON query understanding. Pricing reflects published standard rates, while token counts are measured directly from our compact prompt via `scripts/benchmark_llms.py`, and latencies are provider-typical estimates for short JSON outputs.
+### A. LLM Model Comparison & Selection
 
-### A. Provider & Model Comparison
+Models using retired/deprecated SDKs or IDs (`google-generativeai`, `gpt-4o-mini`, `claude-3-5-haiku-20241022`, and `gemini-2.5-flash` scheduled to route to Gemini 3.5 Flash-Lite on Dec 1, 2026) were replaced with current native structured-output SDKs and models:
 
-| Evaluation Criteria | OpenAI `gpt-4o-mini` | Google `gemini-2.5-flash` | Anthropic `claude-3-5-haiku` |
+| Evaluation Criteria | OpenAI `gpt-6-luna` | Anthropic `claude-haiku-5-5` | Google `gemini-3.1-flash-lite` | Google `gemini-3.5-flash-lite` |
+|---|:---:|:---:|:---:|:---:|
+| **SDK Used** | `openai` (`beta.chat.completions.parse`) | `anthropic` (`output_config.format` `json_schema`) | `google-genai` (`client.aio` + `response_schema`) | `google-genai` (`client.aio` + `response_schema`) |
+| **Input Price / 1M Tokens *(published)*** | **$0.10** ($0.05 Batch/Flex) | **$0.10** (≤100K prompt) | $0.25 | $0.30 |
+| **Output Price / 1M Tokens *(published)*** | **$0.50** ($0.25 Batch/Flex) | **$0.50** (≤100K prompt) | $1.50 | $2.50 *(incl. thinking)* |
+| **Native JSON Schema** | Yes | Yes (`output_config.format`) | Yes (`response_schema`) | Yes (`response_schema`) |
+| **Est. LLM Cost / Req *(309 in / 52 out)*** | **$0.0000569** | **$0.0000569** | $0.0001553 | $0.0002227 |
+| **Est. LLM Cost / 1,000 Req** | **$0.0569** ($0.0285 Flex) | **$0.0569** | $0.1553 | $0.2227 |
+
+*(Measured prompt size from `scripts/benchmark_llms.py`: ~309 input tokens, ~52 output tokens. At 296 input / 52 output tokens, `gemini-3.5-flash-lite` is `$0.0002188` per request or `$0.2188` per 1,000 requests. Published token rates vary across tiers/regions; latencies are provider-dependent estimates until benchmarked with live API keys.)*
+
+### B. Search API Cost Comparison (9 Queries per Uncached Discovery)
+
+Each uncached `POST /prospect-discovery` request issues up to **9 platform search queries**:
+
+| Search Provider | Published Rate / 1K Queries | Search Cost / Discovery (9 queries) | Search Cost / 1,000 Discoveries |
 |---|:---:|:---:|:---:|
-| **Provider** | OpenAI | Google Cloud | Anthropic |
-| **Published Input Price / 1M Tokens** | $0.150 | **$0.075** | $0.800 |
-| **Published Output Price / 1M Tokens** | $0.600 | **$0.300** | $4.000 |
-| **Expected Latency *(estimated)*** | ~350–450 ms | **~200–300 ms** | ~400–500 ms |
-| **Context Window *(documented)*** | 128,000 tokens | **1,000,000 tokens** | 200,000 tokens |
-| **Native JSON Schema** | Yes (`json_object`) | Yes (`application/json`) | Prompt-constrained |
-| **Measured Prompt Cost / 1,000 Req** | $0.0756 | **$0.0378** | $0.4448 |
-| **Suitability** | Strong fallback | **Primary Recommendation** | High cost for classification |
+| **Serper Starter** | $1.00 | **$0.0090** | **$9.00** |
+| **Brave Search** | $5.00 | $0.0450 | $45.00 |
+| **DuckDuckGo Fallback** | $0.00 *(no paid API fee)* | $0.0000 | $0.00 |
 
-### B. Cost per Discovery Request Breakdown (Measured via `scripts/benchmark_llms.py`)
+### C. Combined Estimated Cost per Discovery (Uncached, Before Credits & Caching)
 
-For an average prospect discovery request:
-- **Measured Prompt Tokens**: ~296 tokens (`SYSTEM_PROMPT` + query)
-- **Measured Output Completion Tokens**: ~52 tokens (structured JSON intent)
+| Stack Configuration | LLM Cost / Req | Search Cost / Req | Combined Cost / Req | Combined / 1,000 Discoveries |
+|---|---:|---:|---:|---:|
+| **Serper Starter + `gpt-6-luna` / `claude-haiku-5-5`** | $0.0000569 | $0.0090 | **$0.009057** | **~$9.06** |
+| **Serper Starter + `gemini-3.1-flash-lite`** | $0.0001553 | $0.0090 | **$0.009155** | **~$9.16** |
+| **Serper Starter + `gemini-3.5-flash-lite`** | $0.0002227 | $0.0090 | **$0.009223** | **~$9.22** |
+| **Brave Search + `gpt-6-luna`** | $0.0000569 | $0.0450 | $0.045057 | ~$45.06 |
 
-$$\text{Cost}_{\text{Gemini 2.5 Flash}} = \left(\frac{296}{1,000,000} \times \$0.075\right) + \left(\frac{52}{1,000,000} \times \$0.300\right) = \mathbf{\$0.000038 \text{ per request}}$$
-$$\text{Cost}_{\text{GPT-4o-mini}} = \left(\frac{296}{1,000,000} \times \$0.150\right) + \left(\frac{52}{1,000,000} \times \$0.600\right) = \mathbf{\$0.000076 \text{ per request}}$$
+**Key Cost Finding:** Search API queries cost **~40x to ~790x more** than LLM query parsing. Consequently, our bounded **TTL + LRU cache** (`CACHE_TTL_SECONDS=3600`, caching both `StructuredIntent` and non-empty search results—never caching failures) and **multi-provider fallback** (`OpenAI -> Gemini -> Anthropic -> offline NLP`) provide the largest real-world cost reduction.
 
-### C. Cost Optimization Techniques Implemented
-1. **Bounded TTL + LRU Caching**: Identical normalized queries within `CACHE_TTL_SECONDS=3600` return cached `StructuredIntent` and cached search hits (0 LLM/search tokens consumed).
-2. **Compact System Prompts**: High-signal, minimal system instruction (~296 tokens total input).
-3. **Deterministic NLP Heuristic Fallback**: Local rule-based + dynamic location parser handles standard and arbitrary queries with zero LLM API spend when offline or rate-limited (100% accuracy on all test cases).
-4. **Deterministic Validation & Scoring**: URL regex, contact filtering, relevance scoring, and deduplication execute locally without LLM calls.
-
-### D. Final Recommendation
-- **Primary Recommended Model**: **Google Gemini 2.5 Flash** (lowest published API cost at ~$0.0378 / 1,000 requests, native `application/json` mode, separated `system_instruction`, fastest typical response speed).
-- **Secondary / Fallback Model**: **OpenAI `gpt-4o-mini`** (reliable `json_object` structured output).
-- **Offline / Zero-Cost Mode**: Built-in deterministic NLP parser guarantees continuous operation even without third-party API keys.
+**Final Recommendation:** **`gpt-6-luna`** paired with **Serper Starter** offers the lowest combined API cost (`~$0.00906` per uncached discovery), with **`gemini-3.5-flash-lite`** and **`claude-haiku-5-5`** configured as live automatic failovers before offline heuristic parsing.
 
 ---
 
-## 8. Practical Test Cases Evaluation
+## 8. Practical Test Cases & Verified Live Results
 
-Verified directly against `TestQueryUnderstanding` (`100%` pass rate):
+### A. Query Understanding & Target Type Consistency
 
-| No. | Search Query | Extracted Audience | Extracted Interest | Extracted Location | Target Type |
+Rule: `target_type` is `"individual"` whenever the query targets human roles (founders, owners, lovers, instructors), and `"business"` only when targeting organization entities directly (`"Digital marketing agencies"`). Location understanding uses LLMs when configured and a general heuristic+dynamic location parser offline (`"Nairobi Kenya"`, `"Reykjavik Iceland"`, `"Austin, Texas, USA"`).
+
+| No. | Search Query | Audience | Interest | Location | Target Type |
 |:---:|---|---|---|---|:---:|
 | **1** | `Football lovers in Washington DC in USA` | Football lovers | Football | Washington DC, District of Columbia, USA | individual |
-| **2** | `Digital marketing agency owners in New York USA` | Digital marketing agency owners | Digital Marketing | New York, New York, USA | business |
+| **2** | `Digital marketing agency owners in New York USA` | Digital marketing agency owners | Digital Marketing | New York, New York, USA | individual |
 | **3** | `Startup founders in London UK` | Startup founders | Startups | London, UK | individual |
 | **4** | `Cricket lovers in Ahmedabad India` | Cricket lovers | Cricket | Ahmedabad, Gujarat, India | individual |
 | **5** | `Restaurant owners in Dubai UAE` | Restaurant owners | Hospitality & Restaurant | Dubai, UAE | individual |
+
+### B. Real Captured Outputs Across All 5 Queries (`TestClient` Live Run)
+
+Executed live via `POST /prospect-discovery` using DuckDuckGo fallback (zero paid API keys):
+
+1. **`Football lovers in Washington DC in USA`** -> `total_prospects: 6+` (e.g., `A. B. Dharmadhikari` via `https://x.com/ABDharmadhikari`, `Dayo` via `https://x.com/Temidayo598`).
+2. **`Digital marketing agency owners in New York USA`** -> `total_prospects: 10` (`5` platforms `SUCCESS`; e.g., `Steven Rank` `https://www.linkedin.com/in/steven-rank-038b242`, `Bill Decker` `https://www.linkedin.com/in/billdecker`, `Erfan Azimi` `https://ge.linkedin.com/in/erfanazimi`, all `New York, New York, USA`).
+3. **`Startup founders in London UK`** -> `total_prospects: 10` (`7` platforms `SUCCESS`; e.g., `Rahim Nathwani` `https://www.linkedin.com/in/rahimnathwani`, `Peter Elstrom` `https://uk.linkedin.com/in/peter-elstrom-a4a6483`, `London Founder's Network` `https://www.londonfoundersnetwork.com`).
+4. **`Cricket lovers in Ahmedabad India`** -> `total_prospects: 6` (`6` platforms `SUCCESS`; e.g., `king of cricketer` `https://x.com/LaxmanRam522352`, `Parody Kartik Sharma` `https://x.com/KartikXCSK`).
+5. **`Restaurant owners in Dubai UAE`** -> `total_prospects: 12` (`8` platforms `SUCCESS`; e.g., `Vince Farahjian` `https://www.linkedin.com/in/vince-farahjian-ab517383`, `Nam Tran` `https://uk.linkedin.com/in/nam-tran-7b642547`, both `Dubai, UAE`).
 
 ---
 
 ## 9. Installation & Setup
 
-### Prerequisites
-- Python 3.10+ (tested on Python 3.10, 3.11, 3.12, and 3.14)
-- Pip package manager
-
-### 1. Clone the Repository
 ```bash
 git clone https://github.com/AyushBajaj7/AI-Prospect-Discovery.git
 cd AI-Prospect-Discovery
-```
 
-### 2. Create Virtual Environment
-```bash
 python -m venv venv
+# Linux/macOS: source venv/bin/activate
+# Windows:     venv\Scripts\activate
 
-# On Linux/macOS:
-source venv/bin/activate
-
-# On Windows:
-venv\Scripts\activate
-```
-
-### 3. Install Dependencies
-```bash
 pip install -r requirements.txt
-```
-
-### 4. Configure Environment Variables
-Copy `.env.example` to `.env`:
-```bash
 cp .env.example .env
 ```
-Edit `.env` to configure your preferred search and LLM keys:
+
+Key environment variables (`.env.example`):
+
 ```env
 PORT=4000
 HOST=0.0.0.0
 CORS_ORIGINS=http://localhost:4000,http://127.0.0.1:4000
+RATE_LIMIT_REQUESTS=30
+RATE_LIMIT_WINDOW_SECONDS=60
 
-# Search Provider (Serper, Brave, or auto-fallback to DuckDuckGo)
 SEARCH_PROVIDER=auto
-SERPER_API_KEY=your_key_here
+SERPER_API_KEY=your_serper_api_key_here
+BRAVE_API_KEY=your_brave_api_key_here
 
-# LLM Provider (Gemini, OpenAI, Anthropic, or auto)
 LLM_PROVIDER=auto
-GEMINI_API_KEY=your_key_here
+OPENAI_MODEL=gpt-6-luna
+GEMINI_MODEL=gemini-3.5-flash-lite
+ANTHROPIC_MODEL=claude-haiku-5-5
 ```
-*(Note: If no API keys are provided, the engine automatically runs using DuckDuckGo search and built-in deterministic NLP parsing with zero errors).*
 
 ---
 
-## 10. Running the Application
+## 10. Running the Application & Verification Scripts
 
-### Start FastAPI Server
 ```bash
-python -m uvicorn app.main:app --host 0.0.0.0 --port 4000 --reload
-```
+# Start FastAPI server (Swagger UI at http://localhost:4000/docs)
+python -m uvicorn app.main:app --host 0.0.0.0 --port 4000
 
-The server will start at:
-- **API Root**: [http://localhost:4000](http://localhost:4000)
-- **Health Check**: [http://localhost:4000/health](http://localhost:4000/health)
-- **API Documentation (Swagger UI)**: [http://localhost:4000/docs](http://localhost:4000/docs)
-- **Prospect Discovery Endpoint**: `POST http://localhost:4000/prospect-discovery`
-
-### Example cURL Request
-```bash
+# Send a discovery request
 curl -X POST "http://localhost:4000/prospect-discovery" \
      -H "Content-Type: application/json" \
      -d "{\"query\": \"Startup founders in London UK\"}"
+
+# Run cost analysis & end-to-end smoke test
+python scripts/benchmark_llms.py
+python scripts/smoke_test.py
 ```
-
-### Verified Execution Log & Live Output Sample
-Captured from executing `scripts/smoke_test.py` and the live discovery pipeline (`Startup founders in London UK`):
-
-```text
-[INFO] app.main - Prospect discovery request [request_id=0c9106cc-96f4-45f8-b41a-edce54c86817] query='Startup founders in London UK'
-[INFO] app.services.prospect_service - Intent parsed: audience='Startup founders' interest='Startups' location='London, UK'
-[INFO] app.services.prospect_service - Platform X: 4 candidate(s) found.
-[INFO] app.services.prospect_service - Platform YouTube: 1 candidate(s) found.
-[INFO] app.services.prospect_service - Platform Facebook: 4 candidate(s) found.
-[INFO] app.services.prospect_service - Platform Google: 4 candidate(s) found.
-[INFO] app.services.prospect_service - Relevance filter: 11+ candidates evaluated & scored above threshold.
-[INFO] app.main - Prospect discovery complete [request_id=0c9106cc-96f4-45f8-b41a-edce54c86817]
-```
-
-*(Note: When `SERPER_API_KEY` or `BRAVE_API_KEY` is configured in `.env`, LinkedIn, Instagram, Threads, WhatsApp, and Email recall increases significantly compared to rate-limited anonymous DuckDuckGo fallback).*
 
 ---
 
-## 11. Automated Testing
+## 11. Automated Testing & CI Matrix
 
-The project includes a comprehensive test suite of **118 automated unit and integration tests** across 11 test categories:
+The test suite contains **136 automated unit and integration tests** in `tests/test_prospect_discovery.py` and runs automatically across Python `3.10`, `3.11`, `3.12`, and `3.14` in [`.github/workflows/ci.yml`](.github/workflows/ci.yml):
 
 ```bash
 pytest tests/ -v
 ```
 
-### Test Coverage Highlights (118/118 Passing)
-
-| Test Category | Scope & Invariants Tested |
-|---|---|
-| **Health & Probes** | Root status, `/health` liveness probe, `X-Request-ID` header generation and UUID uniqueness |
-| **Input Validation** | Empty queries, whitespace-only, numeric/non-alphabetic queries, min/max length checks, malformed JSON bodies |
-| **Query Understanding** | All 5 mandatory assessment queries + dynamic unknown cities (`Austin, Texas, USA`), intent caching & cache hit verification |
-| **Platform Validators** | Public profile URL patterns for 9 platforms, rejection of post/reel/story/hashtag/job/login URLs, anti-SSRF private/local host rejection, RFC email validation (`.co.uk`, bogus domains), ITU-T phone verification rejecting date/year ranges, tracking parameter stripping |
-| **Normalizers** | Platform title stripping, boilerplate title filtering (`Log in`, `404 Not Found`), handle extraction across platforms |
-| **Relevance Scoring** | 100-point rubric breakdown, word-boundary & alias location matching (`United Kingdom` -> `UK`, `Ukraine` rejected for `UK`), query without location full credit |
-| **Entity Deduplication** | Transitive clustering, URL exact match, shared email/phone, shared handle + location, full name + verified location (`India` vs `Indiana` prevented) |
-| **API Contract** | Shape of `ProspectDiscoveryResponse`, total count consistency, header propagation, zero internal stack trace leakage on error |
-| **Security Hardening** | CORS origin restriction & `allow_credentials=False`, >64 KB body rejection with `413` + `X-Request-ID`, malformed `Content-Length` `400` response |
-| **Platform Resilience** | Graceful partial degradation (single platform failure does not crash pipeline), all-platforms-failing zero-hit fallback |
-| **End-to-End Pipeline** | Full mocked discovery pipeline testing all 5 mandatory practical test queries + `scripts/smoke_test.py` live check |
+Coverage spans health & request-ID tracking, input validation, query understanding (5 mandatory queries + genuinely uncatalogued cities `Nairobi Kenya`, `Reykjavik Iceland`, `Austin, Texas, USA`), prompt/search-operator injection prevention, IPv4 & IPv6 anti-SSRF rules, ReDoS adversarial timing bounds, sliding-window `429` rate limiting, multi-provider LLM fallback chains, strict `RELEVANCE_THRESHOLD` filtering, `SearchStatus` / non-cached failure telemetry, official WhatsApp normalization, and entity conflict guards.
 
 ---
 
 ## 12. Deployment
 
-### Using Docker
-
 ```bash
-# Build the Docker image (non-root appuser, HEALTHCHECK, .dockerignore protected)
+# Non-root hardened Docker image (protected by .dockerignore)
 docker build -t ai-prospect-discovery .
-
-# Run the container mapping port 4000
 docker run -d -p 4000:4000 --env-file .env ai-prospect-discovery
 ```
 
-### Cloud Deployment (Render / Railway / AWS)
-1. Push code to your public GitHub repository.
-2. Link the repository on Render or Railway.
-3. Set Build Command: `pip install -r requirements.txt`
-4. Set Start Command: `uvicorn app.main:app --host 0.0.0.0 --port 4000`
-5. Configure environment variables in the cloud dashboard.
+For Render / Railway / Cloud Run: point start command to `uvicorn app.main:app --host 0.0.0.0 --port 4000` and configure secrets via the provider dashboard.
 
 ---
 
-## 13. Verification & Submission Checklist
+## 13. Verification Checklist
 
-- [x] **FastAPI Endpoint**: Running on port `4000` at `POST /prospect-discovery`.
-- [x] **Supported Platforms**: Google, LinkedIn, X, YouTube, Instagram, WhatsApp, Facebook, Email, Threads.
-- [x] **Contacts Discovery**: Public emails, phone numbers, and WhatsApp links extracted without fabrication.
-- [x] **Deduplication**: Identity resolution based on URLs, handles, contacts, and normalized names.
-- [x] **Relevance Scoring**: Weighted 100-point scoring system with thresholding.
-- [x] **LLM Comparison**: Detailed cost, speed, and model analysis included in Section 7.
-- [x] **Test Coverage**: 100% passing pytest automated test suite (`118/118` tests passing).
-- [x] **Documentation**: Complete setup, security hardening, API contract, and deployment documentation.
+- [x] **FastAPI Endpoint**: `POST /prospect-discovery` running on port `4000`, Swagger UI at `/docs`.
+- [x] **All 9 Discovery Platforms**: Google, LinkedIn, X, YouTube, Instagram, Facebook, Threads, WhatsApp, Email + extracted `Phone` links.
+- [x] **Modern LLM SDKs & Fallback**: `openai`, `google-genai`, `anthropic` (`output_config.format`), chaining sequentially before heuristics.
+- [x] **Security Hardening**: Operator-injection sanitization, `429` rate limiter, 64 KB body cap, IPv4/IPv6 checks, non-root Docker, clean Git history.
+- [x] **Result Accuracy**: Strict relevance filtering, conflict-safe deduplication, evidence-only locations, official WhatsApp URL normalization.
+- [x] **Test Coverage & CI**: **136/136** tests passing locally + GitHub Actions matrix (`3.10`, `3.11`, `3.12`, `3.14`).

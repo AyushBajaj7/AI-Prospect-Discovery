@@ -24,13 +24,13 @@ _EXCLUDED_DOMAINS = frozenset(
         "amazon.com", "ebay.com", "etsy.com",
         "meetup.com", "eventbrite.com", "forbes.com", "bloomberg.com",
         "techcrunch.com", "businessinsider.com", "bbc.com", "bbc.co.uk",
-        "reuters.com", "theguardian.com", "nytimes.com",
+        "reuters.com", "theguardian.com", "nytimes.com", "trip.com",
     }
 )
 
-# URL patterns indicating dated news articles / press stories rather than profiles
+# URL patterns indicating dated news articles, guides, or press stories rather than profiles
 _NEWS_OR_ARTICLE_PATH_RE = re.compile(
-    r"/(?:20\d{2}/\d{2}(?:/\d{2})?|news|articles?|blog|press|stories|events?)/",
+    r"/(?:20\d{2}/\d{2}(?:/\d{2})?|news|articles?|blog|press|stories|events?|moments|outlets)/?",
     re.IGNORECASE,
 )
 

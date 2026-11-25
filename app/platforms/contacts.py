@@ -1,31 +1,31 @@
 """
 Contact extractor – finds publicly published email addresses, phone numbers,
-and WhatsApp links inside free-text snippets and titles.
+and normalized WhatsApp links inside free-text snippets and titles.
 
-Only publicly visible information is extracted; nothing is guessed or generated.
+Input text length is capped before regex matching to eliminate ReDoS exposure.
 """
 from __future__ import annotations
 
 import re
 from typing import Dict, List
 
-from app.utils.validators import is_valid_email, is_valid_phone
+from app.utils.validators import is_valid_email, is_valid_phone, normalize_whatsapp_url
+
+_MAX_SCAN_CHARS = 10_000
 
 # ---------------------------------------------------------------------------
-# Compiled patterns
+# Compiled patterns (bounded repetitions for linear-time matching)
 # ---------------------------------------------------------------------------
 
-# Supports multi-part TLDs (e.g. alex@company.co.uk) as well as standard TLDs
 _EMAIL_RE = re.compile(
-    r"[a-zA-Z0-9_%+\-]+(?:\.[a-zA-Z0-9_%+\-]+)*"
+    r"[a-zA-Z0-9_%+\-]{1,64}(?:\.[a-zA-Z0-9_%+\-]{1,64}){0,8}"
     r"@"
-    r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]*[a-zA-Z0-9])?\.)+"
+    r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.){1,5}"
     r"[a-zA-Z]{2,24}",
     re.IGNORECASE,
 )
 
 # Conservative phone pattern requiring separator formatting or leading '+'.
-# Avoids matching plain integers, follower counts, or year ranges (further validated).
 _PHONE_RE = re.compile(
     r"(?<!\d)"
     r"(?:"
@@ -50,14 +50,14 @@ def extract_emails(text: str) -> List[str]:
     """Return a deduplicated list of valid public email addresses found in text."""
     if not text:
         return []
+    bounded = text[:_MAX_SCAN_CHARS]
     seen: set[str] = set()
     result: List[str] = []
-    for match in _EMAIL_RE.finditer(text):
-        email = match.group(0).strip(".,;:'\"")
-        email_lower = email.lower()
-        if email_lower not in seen and is_valid_email(email_lower):
-            seen.add(email_lower)
-            result.append(email_lower)
+    for match in _EMAIL_RE.finditer(bounded):
+        email = match.group(0).strip(".,;:'\"").lower()
+        if email not in seen and is_valid_email(email):
+            seen.add(email)
+            result.append(email)
     return result
 
 
@@ -65,9 +65,10 @@ def extract_phones(text: str) -> List[str]:
     """Return a deduplicated list of plausible public phone numbers found in text."""
     if not text:
         return []
+    bounded = text[:_MAX_SCAN_CHARS]
     seen: set[str] = set()
     result: List[str] = []
-    for match in _PHONE_RE.finditer(text):
+    for match in _PHONE_RE.finditer(bounded):
         phone = match.group(0).strip(".,;:'\" ")
         if phone not in seen and is_valid_phone(phone):
             seen.add(phone)
@@ -76,16 +77,20 @@ def extract_phones(text: str) -> List[str]:
 
 
 def extract_whatsapp_links(text: str) -> List[str]:
-    """Return a deduplicated list of public WhatsApp links found in text."""
+    """
+    Return deduplicated, officially normalized public WhatsApp links
+    (`https://wa.me/<digits>`, no '+' sign).
+    """
     if not text:
         return []
+    bounded = text[:_MAX_SCAN_CHARS]
     seen: set[str] = set()
     result: List[str] = []
-    for match in _WHATSAPP_RE.finditer(text):
-        link = match.group(0).strip(".,;:'\" ")
-        if link not in seen:
-            seen.add(link)
-            result.append(link)
+    for match in _WHATSAPP_RE.finditer(bounded):
+        normalized = normalize_whatsapp_url(match.group(0).strip(".,;:'\" "))
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            result.append(normalized)
     return result
 
 
