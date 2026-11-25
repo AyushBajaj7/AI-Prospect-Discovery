@@ -20,6 +20,7 @@ from typing import Dict, List, Tuple
 
 from app.config import settings
 from app.schemas import RawCandidate, StructuredIntent
+from app.utils.normalizers import location_matches_text
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ _AUDIENCE_SYNONYMS: Dict[str, List[str]] = {
 
 
 def _stem(word: str) -> str:
-    """Very lightweight suffix strip (plurals / gerunds) for keyword matching."""
+    """Lightweight suffix strip (plurals / gerunds) for keyword matching."""
     for suffix in ("ing", "ers", "ies", "es", "s"):
         if word.endswith(suffix) and len(word) - len(suffix) >= 3:
             return word[: -len(suffix)]
@@ -41,8 +42,13 @@ def _stem(word: str) -> str:
 
 
 def _keyword_in_text(keyword: str, text: str) -> bool:
-    kw_stem = _stem(keyword)
-    return keyword in text or (len(kw_stem) >= 3 and kw_stem in text)
+    kw_lower = keyword.lower()
+    kw_stem = _stem(kw_lower)
+    if len(kw_lower) <= 4:
+        return bool(re.search(rf"\b{re.escape(kw_lower)}\w*\b", text))
+    return kw_lower in text or (
+        len(kw_stem) >= 3 and bool(re.search(rf"\b{re.escape(kw_stem)}", text))
+    )
 
 
 class RelevanceService:
@@ -80,14 +86,13 @@ class RelevanceService:
             elif matched > 0:
                 breakdown["audience_match"] = 40.0 * matched / len(audience_kws)
             else:
-                # Check synonyms
                 for root, syns in _AUDIENCE_SYNONYMS.items():
                     if root in intent.audience.lower():
-                        if any(s in searchable for s in syns):
+                        if any(_keyword_in_text(s, searchable) for s in syns):
                             breakdown["audience_match"] = 25.0
                             break
         else:
-            breakdown["audience_match"] = 20.0  # neutral when no keywords
+            breakdown["audience_match"] = 20.0
 
         # ---------------------------------------------------------------- #
         # 2. Interest / topic match  (max 20)
@@ -104,7 +109,7 @@ class RelevanceService:
             else:
                 breakdown["interest_match"] = 10.0
         else:
-            breakdown["interest_match"] = 10.0  # neutral
+            breakdown["interest_match"] = 10.0
 
         # ---------------------------------------------------------------- #
         # 3. Location match  (max 25)
@@ -113,20 +118,21 @@ class RelevanceService:
         no_location_in_query = not intent.location.city and not intent.location.country
 
         if no_location_in_query:
-            loc_score = 25.0  # no location constraint → full score
+            loc_score = 25.0
         else:
-            if intent.location.city and intent.location.city.lower() in searchable:
+            if intent.location.city and location_matches_text(intent.location.city, searchable):
                 loc_score += 15.0
-            if intent.location.state and intent.location.state.lower() in searchable:
+            if intent.location.state and location_matches_text(intent.location.state, searchable):
                 loc_score += 5.0
-            if intent.location.country and intent.location.country.lower() in searchable:
+            if intent.location.country and location_matches_text(intent.location.country, searchable):
                 loc_score += 5.0
-            # Partial credit: location in candidate's stored location field
+
+            # Fallback against stored candidate.location (only reliable when text didn't match)
             if loc_score == 0 and candidate.location:
                 cand_loc_lower = candidate.location.lower()
-                if intent.location.city and intent.location.city.lower() in cand_loc_lower:
+                if intent.location.city and location_matches_text(intent.location.city, cand_loc_lower):
                     loc_score = 15.0
-                elif intent.location.country and intent.location.country.lower() in cand_loc_lower:
+                elif intent.location.country and location_matches_text(intent.location.country, cand_loc_lower):
                     loc_score = 5.0
 
         breakdown["location_match"] = min(25.0, loc_score)
@@ -166,7 +172,6 @@ class RelevanceService:
                     settings.RELEVANCE_THRESHOLD,
                 )
 
-        # Sort by relevance descending so top prospects appear first
         relevant.sort(key=lambda c: c.relevance_score, reverse=True)
         return relevant
 

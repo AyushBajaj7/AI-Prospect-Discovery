@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     LLM_PROVIDER: str = "auto"
 
     GEMINI_API_KEY: Optional[str] = None
-    GEMINI_MODEL: str = "gemini-1.5-flash"
+    GEMINI_MODEL: str = "gemini-2.5-flash"
 
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_MODEL: str = "gpt-4o-mini"
@@ -62,14 +62,16 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ #
     MAX_RESULTS_PER_PLATFORM: int = Field(default=5, ge=1, le=20)
     SEARCH_TIMEOUT_SECONDS: int = Field(default=15, ge=5, le=60)
+    SEARCH_MAX_CONCURRENCY: int = Field(default=4, ge=1, le=10)
     # Minimum 0–100 score to include a prospect in the final results
     RELEVANCE_THRESHOLD: float = Field(default=35.0, ge=0.0, le=100.0)
 
     # ------------------------------------------------------------------ #
     # In-process cache
     # ------------------------------------------------------------------ #
-    # TTL in seconds for query-intent cache (default: 1 hour)
+    # TTL in seconds for query-intent & search caches (default: 1 hour)
     CACHE_TTL_SECONDS: int = Field(default=3600, ge=60)
+    CACHE_MAX_SIZE: int = Field(default=1000, ge=50, le=50000)
 
     # ------------------------------------------------------------------ #
     # Validators

@@ -7,12 +7,7 @@ class YouTubeAdapter(BasePlatformAdapter):
     platform_name = "YouTube"
 
     def build_query(self, intent: StructuredIntent) -> str:
-        loc = ""
-        if intent.location.city:
-            loc = f'"{intent.location.city}"'
-        elif intent.location.country:
-            loc = f'"{intent.location.country}"'
-
+        loc = self._location_query_term(intent)
         topic = intent.interest or intent.audience
         return (
             f'site:youtube.com "{topic}" {loc} '

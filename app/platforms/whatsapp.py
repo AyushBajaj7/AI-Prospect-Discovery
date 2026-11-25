@@ -13,7 +13,8 @@ from app.platforms.base import BasePlatformAdapter
 from app.platforms.contacts import extract_all_contacts
 from app.schemas import RawCandidate, SocialLink, StructuredIntent
 from app.services.search_service import search_service
-from app.utils.normalizers import clean_name, normalize_location
+from app.utils.normalizers import clean_name
+from app.utils.validators import clean_url, is_valid_profile_url
 
 logger = logging.getLogger(__name__)
 
@@ -22,21 +23,12 @@ class WhatsAppAdapter(BasePlatformAdapter):
     platform_name = "WhatsApp"
 
     def build_query(self, intent: StructuredIntent) -> str:
-        loc = ""
-        if intent.location.city:
-            loc = f'"{intent.location.city}"'
-        elif intent.location.country:
-            loc = f'"{intent.location.country}"'
-
-        audience = f'"{intent.audience}"'
+        loc = self._location_query_term(intent)
+        audience = self._audience_query_term(intent)
         return f'{audience} {loc} ("wa.me" OR "api.whatsapp.com/send")'.strip()
 
     def validate_url(self, url: str) -> bool:
-        return bool(url) and (
-            "wa.me/" in url.lower()
-            or "api.whatsapp.com/send" in url.lower()
-            or "chat.whatsapp.com/" in url.lower()
-        )
+        return is_valid_profile_url("WhatsApp", url)
 
     async def discover(
         self, intent: StructuredIntent, max_results: int = 5
@@ -53,13 +45,12 @@ class WhatsAppAdapter(BasePlatformAdapter):
         for hit in hits:
             title = hit.get("title", "")
             snippet = hit.get("snippet", "")
-            page_url = hit.get("link", "")
+            page_url = clean_url(hit.get("link", ""))
             combined = f"{title} {snippet} {page_url}"
 
             contacts = extract_all_contacts(combined)
-            wa_links = contacts["whatsapp_links"]
+            wa_links = [clean_url(wa) for wa in contacts["whatsapp_links"] if self.validate_url(clean_url(wa))]
 
-            # Also check if the result URL itself is a wa.me link
             if self.validate_url(page_url) and page_url not in wa_links:
                 wa_links.append(page_url)
 

@@ -88,12 +88,18 @@ class ProspectService:
             settings.RELEVANCE_THRESHOLD,
         )
 
-        # Graceful fallback: if strict threshold removes everything, keep
-        # top-5 by score so the endpoint always returns *something* useful.
+        # Conservative fallback: if the main threshold removed everything, keep
+        # only partially relevant candidates (minimum 25/100) rather than returning
+        # completely off-topic noise.
         if not relevant and enriched:
-            logger.info("Threshold too strict; returning top-5 by score as fallback.")
-            enriched.sort(key=lambda c: c.relevance_score, reverse=True)
-            relevant = enriched[:5]
+            partial = [c for c in enriched if c.relevance_score >= 25.0]
+            if partial:
+                logger.info(
+                    "Threshold too strict; returning top %d partial match(es) (>= 25).",
+                    min(5, len(partial)),
+                )
+                partial.sort(key=lambda c: c.relevance_score, reverse=True)
+                relevant = partial[:5]
 
         # --- Step 5: Deduplication & consolidation ---
         consolidated: List[Prospect] = deduplication_service.consolidate(relevant)

@@ -7,13 +7,8 @@ class InstagramAdapter(BasePlatformAdapter):
     platform_name = "Instagram"
 
     def build_query(self, intent: StructuredIntent) -> str:
-        loc = ""
-        if intent.location.city:
-            loc = f'"{intent.location.city}"'
-        elif intent.location.country:
-            loc = f'"{intent.location.country}"'
-
-        audience = f'"{intent.audience}"'
+        loc = self._location_query_term(intent)
+        audience = self._audience_query_term(intent)
         return (
             f"site:instagram.com {audience} {loc} "
             f"-inurl:/p/ -inurl:/reel/ -inurl:/stories/ -inurl:/explore/"

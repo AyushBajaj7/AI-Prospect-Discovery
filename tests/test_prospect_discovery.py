@@ -670,3 +670,231 @@ class TestAllFiveMandatoryQueries:
             for sl in prospect["social_link"]:
                 assert sl["platform"]
                 assert sl["link"]
+
+
+# ===========================================================================
+# 11. Security hardening, anti-SSRF, false-positive prevention & edge cases
+# ===========================================================================
+
+class TestSecurityAndEdgeCases:
+
+    def test_cors_blocks_untrusted_origin_and_disallows_credentials(self):
+        resp = client.options(
+            "/prospect-discovery",
+            headers={
+                "Origin": "https://evil-attacker.example",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+        assert resp.headers.get("access-control-allow-origin") != "*"
+        assert resp.headers.get("access-control-allow-origin") != "https://evil-attacker.example"
+        assert resp.headers.get("access-control-allow-credentials") != "true"
+
+    def test_cors_allows_configured_origin(self):
+        resp = client.get("/health", headers={"Origin": "http://localhost:4000"})
+        assert resp.status_code == 200
+        assert resp.headers.get("access-control-allow-origin") == "http://localhost:4000"
+        assert resp.headers.get("access-control-allow-credentials") != "true"
+
+    def test_oversized_body_rejected_with_request_id(self):
+        huge_query = "a" * (70 * 1024)
+        resp = client.post(
+            "/prospect-discovery",
+            content=json.dumps({"query": huge_query}),
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status_code == 413
+        assert "X-Request-ID" in resp.headers
+        assert resp.json()["success"] is False
+
+    def test_malformed_content_length_returns_400_not_500(self):
+        resp = client.post(
+            "/prospect-discovery",
+            content='{"query": "Startup founders in London UK"}',
+            headers={
+                "Content-Type": "application/json",
+                "Content-Length": "not-a-number",
+            },
+        )
+        assert resp.status_code == 400
+        assert "X-Request-ID" in resp.headers
+        assert resp.json()["success"] is False
+
+    @pytest.mark.parametrize("bad_url", [
+        "http://localhost:4000/admin",
+        "http://127.0.0.1/secret",
+        "http://169.254.169.254/latest/meta-data",
+        "http://10.0.0.1/internal",
+        "https://www.google.co.uk/search?q=test",
+        "javascript:alert(1)",
+    ])
+    def test_ssrf_and_unsafe_urls_rejected(self, bad_url):
+        assert not is_valid_profile_url("Google", bad_url)
+
+    @pytest.mark.parametrize("url,expected_clean", [
+        ("https://www.instagram.com/cristiano/?hl=en&igsh=abc123", "https://www.instagram.com/cristiano"),
+        ("https://www.linkedin.com/in/alex-morgan?trk=public_profile", "https://www.linkedin.com/in/alex-morgan"),
+        ("https://www.youtube.com/@mkbhd?si=sharetoken123", "https://www.youtube.com/@mkbhd"),
+    ])
+    def test_clean_url_strips_platform_tracking_and_validates(self, url, expected_clean):
+        cleaned = clean_url(url)
+        assert cleaned == expected_clean
+
+    def test_facebook_people_and_profile_php_urls_valid(self):
+        assert is_valid_profile_url("Facebook", "https://www.facebook.com/people/Alex-Morgan/1000837462738")
+        assert is_valid_profile_url("Facebook", "https://www.facebook.com/profile.php?id=1000837462738")
+        assert not is_valid_profile_url("Facebook", "https://www.facebook.com/login")
+        assert not is_valid_profile_url("Instagram", "https://www.instagram.com/explore")
+
+    def test_multipart_tld_email_extracted_and_year_range_not_phone(self):
+        from app.platforms.contacts import extract_all_contacts
+
+        snippet = "Co-Founder 2020-2025 | Joined 2024-01-15 | 1500000 views | email alex@company.co.uk"
+        contacts = extract_all_contacts(snippet)
+        assert "alex@company.co.uk" in contacts["emails"]
+        assert contacts["phones"] == []
+        assert not is_valid_phone("2020-2025")
+        assert not is_valid_phone("00000000")
+
+    @pytest.mark.parametrize("boilerplate", [
+        "Log in or sign up to view",
+        "Home",
+        "Instagram",
+        "404 Not Found",
+        "Just a moment",
+    ])
+    def test_boilerplate_names_rejected(self, boilerplate):
+        assert clean_name(boilerplate, "Instagram") == ""
+
+    def test_dynamic_unknown_city_heuristic_understanding(self):
+        intent = asyncio.run(
+            query_service.get_structured_intent("Yoga instructors in Austin, Texas, USA")
+        )
+        assert intent.location.city == "Austin"
+        assert intent.location.state == "Texas"
+        assert intent.location.country == "USA"
+        assert "Yoga" in (intent.interest or "")
+
+    def test_ukraine_does_not_match_uk_location_but_united_kingdom_does(self):
+        uk_intent = StructuredIntent(
+            interest="Startups",
+            audience="Startup founders",
+            location=LocationDetails(city="London", country="UK"),
+        )
+        ukraine_cand = RawCandidate(
+            platform="LinkedIn",
+            name="Ivan Kovalenko",
+            profile_url="https://linkedin.com/in/ivankovalenko",
+            title="Founder | Tech in Kyiv, Ukraine",
+            snippet="Building software products in Ukraine.",
+        )
+        _, ukraine_bd = relevance_service.evaluate_candidate(ukraine_cand, uk_intent)
+        assert ukraine_bd["location_match"] == 0.0
+
+        england_cand = RawCandidate(
+            platform="LinkedIn",
+            name="Emma Clarke",
+            profile_url="https://linkedin.com/in/emmaclarke",
+            title="Founder | Tech in Greater London, United Kingdom",
+            snippet="Startup founder based in United Kingdom.",
+        )
+        _, england_bd = relevance_service.evaluate_candidate(england_cand, uk_intent)
+        assert england_bd["location_match"] >= 20.0
+
+    def test_india_vs_indiana_not_merged_as_same_location(self):
+        a = RawCandidate(
+            platform="LinkedIn",
+            name="Rahul Sharma",
+            location="India",
+            profile_url="https://linkedin.com/in/rahul-in",
+            social_links=[SocialLink(platform="LinkedIn", link="https://linkedin.com/in/rahul-in")],
+        )
+        b = RawCandidate(
+            platform="X",
+            name="Rahul Sharma",
+            location="Indiana, USA",
+            profile_url="https://x.com/rahul_indiana",
+            social_links=[SocialLink(platform="X", link="https://x.com/rahul_indiana")],
+        )
+        prospects = deduplication_service.consolidate([a, b])
+        assert len(prospects) == 2
+
+    def test_transitive_deduplication_merges_three_profiles_via_bridge(self):
+        a = RawCandidate(
+            platform="LinkedIn",
+            name="Sam Patel",
+            location="London, UK",
+            profile_url="https://linkedin.com/in/sampatel",
+            emails=["sam@patel.io"],
+            social_links=[SocialLink(platform="LinkedIn", link="https://linkedin.com/in/sampatel")],
+        )
+        b = RawCandidate(
+            platform="X",
+            name="Sam Patel",
+            location="London, UK",
+            profile_url="https://x.com/sampatel_uk",
+            metadata={"handle": "sampatel_uk"},
+            social_links=[SocialLink(platform="X", link="https://x.com/sampatel_uk")],
+        )
+        # C shares handle with B and email with A -> bridges A and B together
+        c = RawCandidate(
+            platform="Instagram",
+            name="S. Patel",
+            location="London, UK",
+            profile_url="https://instagram.com/sampatel_uk",
+            emails=["sam@patel.io"],
+            metadata={"handle": "sampatel_uk"},
+            social_links=[SocialLink(platform="Instagram", link="https://instagram.com/sampatel_uk")],
+        )
+        prospects = deduplication_service.consolidate([a, b, c])
+        assert len(prospects) == 1
+        assert len(prospects[0].social_link) == 3
+
+    def test_adapter_does_not_fabricate_location_when_absent_from_text(self):
+        from app.platforms.linkedin import LinkedInAdapter
+
+        adapter = LinkedInAdapter()
+        intent = StructuredIntent(
+            interest="Football",
+            audience="Football lovers",
+            location=LocationDetails(city="Washington DC", state="District of Columbia", country="USA"),
+        )
+        loc = adapter._infer_location("John Doe - Sports Analyst | LinkedIn", intent)
+        assert loc is None
+
+    def test_different_people_on_same_social_platform_never_merged_by_shared_role_email(self):
+        c1 = RawCandidate(
+            platform="LinkedIn",
+            name="Rahim Nathwani",
+            location="London, UK",
+            profile_url="https://www.linkedin.com/in/rahimnathwani",
+            emails=["cofounder@rephrase.ai"],
+            social_links=[
+                SocialLink(platform="LinkedIn", link="https://www.linkedin.com/in/rahimnathwani"),
+                SocialLink(platform="Email", link="mailto:cofounder@rephrase.ai"),
+            ],
+        )
+        c2 = RawCandidate(
+            platform="LinkedIn",
+            name="Yashvardhan Rana",
+            location="London, UK",
+            profile_url="https://in.linkedin.com/in/yashvardhanrana",
+            emails=["cofounder@rephrase.ai"],
+            social_links=[
+                SocialLink(platform="LinkedIn", link="https://in.linkedin.com/in/yashvardhanrana"),
+                SocialLink(platform="Email", link="mailto:cofounder@rephrase.ai"),
+            ],
+        )
+        prospects = deduplication_service.consolidate([c1, c2])
+        assert len(prospects) == 2
+
+    def test_google_adapter_rejects_news_articles_and_event_directories(self):
+        from app.platforms.google import GoogleAdapter
+
+        g = GoogleAdapter()
+        assert not g.validate_url("https://news.northeastern.edu/2026/06/05/startup-pitch-competition")
+        assert not g.validate_url("https://www.meetup.com/london-entrepreneur-startup-network")
+        assert not g.validate_url("https://www.london.edu/insights/news/spotlight")
+        assert g.validate_url("https://about.me/alexmorgan")
+
+

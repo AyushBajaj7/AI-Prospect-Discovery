@@ -7,13 +7,8 @@ class FacebookAdapter(BasePlatformAdapter):
     platform_name = "Facebook"
 
     def build_query(self, intent: StructuredIntent) -> str:
-        loc = ""
-        if intent.location.city:
-            loc = f'"{intent.location.city}"'
-        elif intent.location.country:
-            loc = f'"{intent.location.country}"'
-
-        audience = f'"{intent.audience}"'
+        loc = self._location_query_term(intent)
+        audience = self._audience_query_term(intent)
         return (
             f"site:facebook.com {audience} {loc} "
             f"-inurl:/groups/ -inurl:/story.php -inurl:/events/"

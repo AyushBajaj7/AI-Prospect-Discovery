@@ -15,20 +15,29 @@ from app.utils.validators import is_valid_email, is_valid_phone
 # Compiled patterns
 # ---------------------------------------------------------------------------
 
+# Supports multi-part TLDs (e.g. alex@company.co.uk) as well as standard TLDs
 _EMAIL_RE = re.compile(
-    r"[a-zA-Z0-9_.+\-]{1,64}@[a-zA-Z0-9\-]{1,63}\.[a-zA-Z]{2,}",
+    r"[a-zA-Z0-9_%+\-]+(?:\.[a-zA-Z0-9_%+\-]+)*"
+    r"@"
+    r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]*[a-zA-Z0-9])?\.)+"
+    r"[a-zA-Z]{2,24}",
     re.IGNORECASE,
 )
 
-# Conservative phone pattern – requires at least 7 digits; avoids matching
-# things like years (2023) or pure decimals.
+# Conservative phone pattern requiring separator formatting or leading '+'.
+# Avoids matching plain integers, follower counts, or year ranges (further validated).
 _PHONE_RE = re.compile(
-    r"(?<!\d)(\+?[0-9]{1,3}[\s.\-]?)?(\(?[0-9]{2,4}\)?[\s.\-]?){1,3}[0-9]{3,5}(?!\d)",
+    r"(?<!\d)"
+    r"(?:"
+    r"\+[0-9]{1,3}[\s.\-]?(?:\(?[0-9]{2,4}\)?[\s.\-]?){1,3}[0-9]{3,5}"
+    r"|"
+    r"(?:\([0-9]{2,4}\)[\s.\-]?|[0-9]{2,4}[\s.\-])(?:[0-9]{2,4}[\s.\-]?){1,2}[0-9]{3,5}"
+    r")"
+    r"(?!\d)",
 )
 
 _WHATSAPP_RE = re.compile(
-    r"https?://(wa\.me/\+?[0-9]{7,15}|api\.whatsapp\.com/send\?phone=[0-9]{7,15}"
-    r"|chat\.whatsapp\.com/[A-Za-z0-9]{10,})",
+    r"https?://(?:wa\.me/\+?[0-9]{7,15}|api\.whatsapp\.com/send\?phone=\+?[0-9]{7,15})",
     re.IGNORECASE,
 )
 

@@ -5,20 +5,21 @@ Security hardening:
 - CORS origins are configurable (not open wildcard with credentials).
 - allow_credentials is False by default to prevent cookie-based CSRF.
 - Internal exception details are never exposed to API callers.
-- A unique request-ID header is added to every response for traceability.
-- Request body size is bounded to 64 KB via a custom middleware.
+- A unique request-ID header is added to every response (including errors).
+- Request body size is bounded to 64 KB via pure ASGI middleware (handles both
+  Content-Length headers and chunked/streaming bodies without buffering overload).
 """
 from __future__ import annotations
 
 import logging
 import uuid
-from typing import Callable
+from typing import Any, Callable, Dict
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.config import settings
 from app.schemas import ProspectDiscoveryResponse, ProspectQueryRequest
@@ -53,34 +54,70 @@ app = FastAPI(
 
 
 # ---------------------------------------------------------------------------
-# Middleware: request-ID injection
+# Pure ASGI Middleware: body-size limiter (registered innermost under RequestID)
 # ---------------------------------------------------------------------------
-class RequestIDMiddleware(BaseHTTPMiddleware):
-    """Attaches a UUID to each request and echoes it in the response header."""
-
-    async def dispatch(self, request: Request, call_next: Callable):
-        request_id = str(uuid.uuid4())
-        request.state.request_id = request_id
-        response = await call_next(request)
-        response.headers["X-Request-ID"] = request_id
-        return response
+class _BodyTooLargeError(Exception):
+    """Raised internally when a streaming request body exceeds MAX_BYTES."""
 
 
-app.add_middleware(RequestIDMiddleware)
-
-
-# ---------------------------------------------------------------------------
-# Middleware: body-size limiter (prevent memory exhaustion)
-# ---------------------------------------------------------------------------
-class BodySizeLimitMiddleware(BaseHTTPMiddleware):
-    """Rejects requests whose body exceeds MAX_BYTES."""
+class BodySizeLimitMiddleware:
+    """Rejects requests whose Content-Length or streamed body exceeds MAX_BYTES."""
 
     MAX_BYTES: int = 64 * 1024  # 64 KB
 
-    async def dispatch(self, request: Request, call_next: Callable):
-        content_length = request.headers.get("content-length")
-        if content_length and int(content_length) > self.MAX_BYTES:
-            return JSONResponse(
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = {k.lower(): v for k, v in scope.get("headers", [])}
+        raw_cl = headers.get(b"content-length")
+        if raw_cl is not None:
+            try:
+                content_length = int(raw_cl)
+            except ValueError:
+                resp = JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content={
+                        "success": False,
+                        "error": "Invalid Content-Length header.",
+                    },
+                )
+                await resp(scope, receive, send)
+                return
+
+            if content_length < 0 or content_length > self.MAX_BYTES:
+                resp = JSONResponse(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    content={
+                        "success": False,
+                        "error": "Request body too large.",
+                        "max_bytes": self.MAX_BYTES,
+                    },
+                )
+                await resp(scope, receive, send)
+                return
+
+        # Enforce hard byte limit on actual streamed chunks (protects against
+        # Transfer-Encoding: chunked or spoofed Content-Length headers).
+        bytes_seen = 0
+
+        async def bounded_receive() -> Message:
+            nonlocal bytes_seen
+            message = await receive()
+            if message["type"] == "http.request":
+                bytes_seen += len(message.get("body", b""))
+                if bytes_seen > self.MAX_BYTES:
+                    raise _BodyTooLargeError()
+            return message
+
+        try:
+            await self.app(scope, bounded_receive, send)
+        except _BodyTooLargeError:
+            resp = JSONResponse(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 content={
                     "success": False,
@@ -88,17 +125,40 @@ class BodySizeLimitMiddleware(BaseHTTPMiddleware):
                     "max_bytes": self.MAX_BYTES,
                 },
             )
-        return await call_next(request)
+            await resp(scope, receive, send)
 
 
+# ---------------------------------------------------------------------------
+# Pure ASGI Middleware: request-ID injection (runs around BodySizeLimit)
+# ---------------------------------------------------------------------------
+class RequestIDMiddleware:
+    """Attaches a UUID to each HTTP request and echoes it in X-Request-ID."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request_id = str(uuid.uuid4())
+        scope.setdefault("state", {})["request_id"] = request_id
+
+        async def send_with_request_id(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                raw_headers = list(message.get("headers", []))
+                raw_headers.append((b"x-request-id", request_id.encode("ascii")))
+                message["headers"] = raw_headers
+            await send(message)
+
+        await self.app(scope, receive, send_with_request_id)
+
+
+# Registration order (last added = outermost):
+#   CORSMiddleware (outermost) -> RequestIDMiddleware -> BodySizeLimitMiddleware
 app.add_middleware(BodySizeLimitMiddleware)
-
-
-# ---------------------------------------------------------------------------
-# Middleware: CORS
-# Security note: allow_credentials=True is ONLY safe when allow_origins is
-# NOT a wildcard.  We use an explicit list from configuration.
-# ---------------------------------------------------------------------------
+app.add_middleware(RequestIDMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins(),
@@ -118,14 +178,13 @@ async def validation_exception_handler(
     # exc.errors() may contain non-serialisable ValueError objects inside the
     # 'ctx' key (e.g. when a field_validator raises ValueError).
     # Sanitise each error dict so the response is always valid JSON.
-    safe_errors: list[dict] = []
+    safe_errors: list[Dict[str, Any]] = []
     for err in exc.errors():
-        safe_err: dict = {
+        safe_err: Dict[str, Any] = {
             "type": err.get("type", ""),
             "loc": list(err.get("loc", [])),
             "msg": err.get("msg", ""),
         }
-        # 'input' is safe (it's the user-supplied value).
         if "input" in err:
             safe_err["input"] = str(err["input"])[:200]
         safe_errors.append(safe_err)
@@ -140,16 +199,30 @@ async def validation_exception_handler(
     )
 
 
+@app.exception_handler(HTTPException)
+async def http_exception_handler(
+    request: Request, exc: HTTPException
+) -> JSONResponse:
+    request_id = getattr(request.state, "request_id", "unknown")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "success": False,
+            "error": str(exc.detail),
+            "request_id": request_id,
+        },
+    )
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(
     request: Request, exc: Exception
 ) -> JSONResponse:
     request_id = getattr(request.state, "request_id", "unknown")
-    # Log full details internally…
     logger.exception(
         "Unhandled error [request_id=%s] on %s", request_id, request.url.path
     )
-    # …but never expose internal stack traces or raw exception messages to callers.
+    # Never expose internal stack traces or raw exception messages to callers.
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={
