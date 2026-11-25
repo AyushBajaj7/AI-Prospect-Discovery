@@ -4,7 +4,7 @@
 [![Python Versions](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.14-blue.svg)](.github/workflows/ci.yml)
 [![Framework](https://img.shields.io/badge/Framework-FastAPI-green.svg)](https://fastapi.tiangolo.com/)
 [![Validation](https://img.shields.io/badge/Validation-Pydantic%20v2-orange.svg)](https://docs.pydantic.dev/)
-[![Tests](https://img.shields.io/badge/Tests-136%20Passing-brightgreen.svg)](tests/test_prospect_discovery.py)
+[![Tests](https://img.shields.io/badge/Tests-146%20Passing-brightgreen.svg)](tests/test_prospect_discovery.py)
 [![License](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)
 
 An intelligent, modular prospect discovery engine built with **FastAPI**, **Pydantic v2**, and modern structured-output **LLM SDKs** (`google-genai`, `openai`, `anthropic`). It accepts natural-language queries, parses structured intent with multi-provider fallback, discovers publicly accessible profiles across **9 discovery platforms**, normalizes and validates public contact channels (`Email`, `Phone`, `WhatsApp`), filters strictly by weighted relevance, deduplicates across platforms, and returns clean JSON with observable `provider_health` telemetry.
@@ -96,9 +96,9 @@ Content-Type: application/json
 }
 ```
 
-### Success Response Structure (`200 OK`)
+### Success Response (`200 OK`)
 
-*(Illustrative schema example showing consolidated multi-platform social links and contact links; see Section 8 for actual live query outputs.)*
+*(Default response strictly matches the assessment contract: `success`, `query`, `total_prospects`, and `prospects`. Provider health telemetry is returned via `X-LLM-Provider` / `X-Platforms-*` HTTP headers, or inside the JSON body when `?include_diagnostics=true` is requested.)*
 
 ```json
 {
@@ -113,24 +113,11 @@ Content-Type: application/json
         { "platform": "LinkedIn", "link": "https://www.linkedin.com/in/alexmorgan" },
         { "platform": "X", "link": "https://x.com/alexmorgan" },
         { "platform": "Email", "link": "mailto:alex@techventures.co" },
-        { "platform": "Phone", "link": "tel:+44 20 7946 0991" },
+        { "platform": "Phone", "link": "tel:+442079460991" },
         { "platform": "WhatsApp", "link": "https://wa.me/442079460991" }
       ]
     }
-  ],
-  "provider_health": {
-    "llm_provider": "openai",
-    "platforms_succeeded": 7,
-    "platforms_no_results": 2,
-    "platforms_rate_limited": 0,
-    "platforms_timed_out": 0,
-    "platforms_errored": 0,
-    "platform_outcomes": {
-      "LinkedIn": "SUCCESS",
-      "X": "SUCCESS",
-      "Google": "SUCCESS"
-    }
-  }
+  ]
 }
 ```
 
@@ -149,18 +136,18 @@ Content-Type: application/json
 | Security Control | Implementation Details |
 |---|---|
 | **Prompt & Search Operator Injection** | System prompts are passed via dedicated SDK system roles (`system_instruction` / `system`), and all parsed `StructuredIntent` fields pass through `sanitize_search_term()` to strip `site:`, `inurl:`, `-site:`, `OR`, quotes, and control characters before query generation. |
-| **Endpoint Rate Limiting** | Pure ASGI `RateLimitMiddleware` enforces per-client-IP sliding-window limits (`RATE_LIMIT_REQUESTS` / `RATE_LIMIT_WINDOW_SECONDS`) returning `429` + `Retry-After`. *(Process-local memory protects single instances; pair with Redis or gateway rate limiting in multi-worker clusters.)* |
+| **Endpoint Rate Limiting** | Pure ASGI `RateLimitMiddleware` uses `scope["client"][0]` by default, trusts `X-Forwarded-For` only from configured `TRUSTED_PROXIES`, purges expired buckets, and bounds memory via `RATE_LIMIT_MAX_CLIENTS` LRU eviction (returning `429` + `Retry-After`). *(Back with Redis or gateway throttling in multi-worker clusters.)* |
 | **Payload Size Protection** | Pure ASGI `BodySizeLimitMiddleware` enforces a strict 64 KB cap on both `Content-Length` headers and chunked/streaming bodies. |
 | **CORS & Error Sanitization** | CORS uses an explicit `CORS_ORIGINS` allowlist (`allow_credentials=False`). Exception handlers return sanitized messages correlated via `X-Request-ID`. |
 | **Host Validation & SSRF Posture** | The engine never fetches untrusted candidate profile URLs over HTTP (only fixed upstream Serper/Brave/DDG endpoints are contacted). Additionally, `is_valid_profile_url()` blocks private/loopback/link-local IPv4 and IPv6 literals (`127.0.0.1`, `[::1]`, `[fe80::1]`, `[fc00::1]`). *(If external profile-page fetching is added later, DNS resolution, rebinding checks, and redirect revalidation must be added.)* |
 | **ReDoS & Bounded Scanning** | Contact regexes avoid nested unbounded quantifiers and cap input text scanning to 10,000 characters (`_MAX_SCAN_CHARS`). |
-| **Contact & Evidence Integrity** | Emails reject bogus domains (`example.com`, `test.com`); phones reject dates/year ranges (`2020-2025`); WhatsApp links strip `+` and formatting (`https://wa.me/<digits>`); locations remain `null` unless confirmed in text. |
+| **Contact & Verification Honesty** | Social URLs are labeled `url_format_validated` (or `search_indexed_web` for general web hits), not live-verified ownership. Emails reject bogus domains (`example.com`, `test.com`); phones normalize to RFC 3966 `tel:` URIs without spaces and reject date/year ranges (`2020-2025`); WhatsApp links strip `+` (`https://wa.me/<digits>`); locations remain `null` unless confirmed in text. |
 
 ---
 
 ## 5. Entity Resolution & Duplicate Detection
 
-1. **Exact Normalized Profile URL**: Unifies identical URLs after tracking-parameter stripping.
+1. **Exact Normalized Profile URL**: Canonicalizes regional LinkedIn subdomains (`uk.linkedin.com` / `ge.linkedin.com` -> `www.linkedin.com`) and strips tracking parameters before matching.
 2. **Conflict Guard (Exclusive Platforms)**: Two different accounts on the same social platform (`LinkedIn` + `LinkedIn`, `X` + `X`, etc.) are never merged—even transitively—preventing different individuals from collapsing together.
 3. **Personal Email Match**: Shared non-generic emails merge only when names match via exact full name or surname + initial (`Sam Patel` + `S. Patel`). Generic company addresses (`info@`, `contact@`, `cofounder@`) never link distinct people such as `John Smith` vs `John Doe`.
 4. **Verified Phone / Platform Handle + Location**: Compatible tokens only (`India` does not match `Indiana, USA`).
@@ -168,11 +155,11 @@ Content-Type: application/json
 
 ---
 
-## 6. Relevance Scoring Algorithm
+## 6. Relevance Scoring & Entity Filtering
 
 $$\text{Score} = \text{Audience Match (40)} + \text{Interest Match (20)} + \text{Location Match (25)} + \text{Evidence Quality (15)}$$
 
-Only candidates scoring `>= RELEVANCE_THRESHOLD` (default `35.0`) are returned. Low-scoring candidates (`< 35.0`) are never leaked into results via sub-threshold fallbacks.
+Before scoring, `ProfileExtractor` classifies each candidate's `entity_type` (`individual`, `business`, or `parody_or_gimmick`). Parody/meme/gimmick accounts are dropped, candidates mismatched against `intent.target_type` (such as organizations on individual-target queries) are filtered out, and only candidates scoring `>= RELEVANCE_THRESHOLD` (default `35.0`) are returned—never falling back to sub-threshold results.
 
 ---
 
@@ -180,7 +167,7 @@ Only candidates scoring `>= RELEVANCE_THRESHOLD` (default `35.0`) are returned. 
 
 ### A. LLM Model Comparison & Selection
 
-Models using retired/deprecated SDKs or IDs (`google-generativeai`, `gpt-4o-mini`, `claude-3-5-haiku-20241022`, and `gemini-2.5-flash` scheduled to route to Gemini 3.5 Flash-Lite on Dec 1, 2026) were replaced with current native structured-output SDKs and models:
+Models using retired/deprecated SDKs or IDs (`google-generativeai`, `gpt-4o-mini`, `claude-3-5-haiku-20241022`, and `gemini-2.5-flash` scheduled to route to Gemini 3.5 Flash-Lite on Dec 1, 2026) were replaced with current native structured-output SDKs and minimum supported versions (`openai>=1.50.0`, `google-genai>=1.0.0`, `anthropic>=0.77.0`):
 
 | Evaluation Criteria | OpenAI `gpt-6-luna` | Anthropic `claude-haiku-5-5` | Google `gemini-3.1-flash-lite` | Google `gemini-3.5-flash-lite` |
 |---|:---:|:---:|:---:|:---:|
@@ -188,24 +175,24 @@ Models using retired/deprecated SDKs or IDs (`google-generativeai`, `gpt-4o-mini
 | **Input Price / 1M Tokens *(published)*** | **$0.10** ($0.05 Batch/Flex) | **$0.10** (≤100K prompt) | $0.25 | $0.30 |
 | **Output Price / 1M Tokens *(published)*** | **$0.50** ($0.25 Batch/Flex) | **$0.50** (≤100K prompt) | $1.50 | $2.50 *(incl. thinking)* |
 | **Native JSON Schema** | Yes | Yes (`output_config.format`) | Yes (`response_schema`) | Yes (`response_schema`) |
-| **Est. LLM Cost / Req *(309 in / 52 out)*** | **$0.0000569** | **$0.0000569** | $0.0001553 | $0.0002227 |
-| **Est. LLM Cost / 1,000 Req** | **$0.0569** ($0.0285 Flex) | **$0.0569** | $0.1553 | $0.2227 |
+| **Est. LLM Cost / Req *(est. 309 in / 52 out)*** | **$0.0000569** | **$0.0000569** | $0.0001553 | $0.0002227 |
+| **Est. LLM Cost / 1,000 Req *(estimated)*** | **$0.0569** ($0.0285 Flex) | **$0.0569** | $0.1553 | $0.2227 |
 
-*(Measured prompt size from `scripts/benchmark_llms.py`: ~309 input tokens, ~52 output tokens. At 296 input / 52 output tokens, `gemini-3.5-flash-lite` is `$0.0002188` per request or `$0.2188` per 1,000 requests. Published token rates vary across tiers/regions; latencies are provider-dependent estimates until benchmarked with live API keys.)*
+*(Estimated token counts via `scripts/benchmark_llms.py` using `len(text) // 4`: ~309 input tokens and ~52 output tokens—not live API-billed token telemetry. At 296 input / 52 output tokens, `gemini-3.5-flash-lite` is `$0.0002188` per request or `$0.2188` per 1,000 requests. Published token rates vary across tiers; latencies and accuracies depend on live workloads.)*
 
-### B. Search API Cost Comparison (9 Queries per Uncached Discovery)
+### B. Baseline Search API Cost Estimates (9 Queries per Uncached Discovery)
 
-Each uncached `POST /prospect-discovery` request issues up to **9 platform search queries**:
+Baseline estimates assuming 9 uncached queries per `POST /prospect-discovery` request before credits, caching, retries, or fallback-provider calls:
 
-| Search Provider | Published Rate / 1K Queries | Search Cost / Discovery (9 queries) | Search Cost / 1,000 Discoveries |
+| Search Provider | Published Rate / 1K Queries | Est. Search Cost / Discovery | Est. Search Cost / 1,000 Discoveries |
 |---|:---:|:---:|:---:|
 | **Serper Starter** | $1.00 | **$0.0090** | **$9.00** |
 | **Brave Search** | $5.00 | $0.0450 | $45.00 |
 | **DuckDuckGo Fallback** | $0.00 *(no paid API fee)* | $0.0000 | $0.00 |
 
-### C. Combined Estimated Cost per Discovery (Uncached, Before Credits & Caching)
+### C. Combined Baseline Estimate per Discovery (Uncached, Before Credits/Retries/Caching)
 
-| Stack Configuration | LLM Cost / Req | Search Cost / Req | Combined Cost / Req | Combined / 1,000 Discoveries |
+| Stack Configuration | Est. LLM Cost / Req | Est. Search Cost / Req | Baseline Combined / Req | Baseline Combined / 1K |
 |---|---:|---:|---:|---:|
 | **Serper Starter + `gpt-6-luna` / `claude-haiku-5-5`** | $0.0000569 | $0.0090 | **$0.009057** | **~$9.06** |
 | **Serper Starter + `gemini-3.1-flash-lite`** | $0.0001553 | $0.0090 | **$0.009155** | **~$9.16** |
@@ -234,13 +221,13 @@ Rule: `target_type` is `"individual"` whenever the query targets human roles (fo
 
 ### B. Real Captured Outputs Across All 5 Queries (`TestClient` Live Run)
 
-Executed live via `POST /prospect-discovery` using DuckDuckGo fallback (zero paid API keys):
+Executed live via `POST /prospect-discovery` using DuckDuckGo fallback (zero paid API keys); every response returned exact schema keys `["success", "query", "total_prospects", "prospects"]` and verified individual profiles:
 
-1. **`Football lovers in Washington DC in USA`** -> `total_prospects: 6+` (e.g., `A. B. Dharmadhikari` via `https://x.com/ABDharmadhikari`, `Dayo` via `https://x.com/Temidayo598`).
-2. **`Digital marketing agency owners in New York USA`** -> `total_prospects: 10` (`5` platforms `SUCCESS`; e.g., `Steven Rank` `https://www.linkedin.com/in/steven-rank-038b242`, `Bill Decker` `https://www.linkedin.com/in/billdecker`, `Erfan Azimi` `https://ge.linkedin.com/in/erfanazimi`, all `New York, New York, USA`).
-3. **`Startup founders in London UK`** -> `total_prospects: 10` (`7` platforms `SUCCESS`; e.g., `Rahim Nathwani` `https://www.linkedin.com/in/rahimnathwani`, `Peter Elstrom` `https://uk.linkedin.com/in/peter-elstrom-a4a6483`, `London Founder's Network` `https://www.londonfoundersnetwork.com`).
-4. **`Cricket lovers in Ahmedabad India`** -> `total_prospects: 6` (`6` platforms `SUCCESS`; e.g., `king of cricketer` `https://x.com/LaxmanRam522352`, `Parody Kartik Sharma` `https://x.com/KartikXCSK`).
-5. **`Restaurant owners in Dubai UAE`** -> `total_prospects: 12` (`8` platforms `SUCCESS`; e.g., `Vince Farahjian` `https://www.linkedin.com/in/vince-farahjian-ab517383`, `Nam Tran` `https://uk.linkedin.com/in/nam-tran-7b642547`, both `Dubai, UAE`).
+1. **`Football lovers in Washington DC in USA`** -> `total_prospects: 5` (`8` platforms `SUCCESS`; e.g., `Dan Sreebny` `https://www.linkedin.com/in/dan-sreebny-06b57718`, `Basil Mokhallalati` `https://www.linkedin.com/in/basilmo`, `Katie Green` `https://www.linkedin.com/in/katie-green-3b345119`, all `Washington DC, District of Columbia, USA`).
+2. **`Digital marketing agency owners in New York USA`** -> `total_prospects: 12` (`9` platforms `SUCCESS`; e.g., `Steven Rank` `https://www.linkedin.com/in/steven-rank-038b242`, `Bill Decker` `https://www.linkedin.com/in/billdecker`, both `New York, New York, USA`).
+3. **`Startup founders in London UK`** -> `total_prospects: 10` (`8` platforms `SUCCESS`; e.g., `Charlie Walker` `https://www.linkedin.com/in/charlie-walker-846184112`, `Rahim Nathwani` `https://www.linkedin.com/in/rahimnathwani`, both `London, UK`).
+4. **`Cricket lovers in Ahmedabad India`** -> `total_prospects: 8` (`8` platforms `SUCCESS`; e.g., `Abhishek Raj` `https://www.linkedin.com/in/abhishek-raj-ab978895`, `Sanandan (Sandy) Sudhir` `https://www.linkedin.com/in/sanandan-sandy-sudhir`, `Jigar Jokhakar` `https://www.linkedin.com/in/jigarjokhakar`).
+5. **`Restaurant owners in Dubai UAE`** -> `total_prospects: 6` (`8` platforms `SUCCESS`; e.g., `Vince Farahjian` `https://www.linkedin.com/in/vince-farahjian-ab517383`, `Nam Tran` `https://www.linkedin.com/in/nam-tran-7b642547`, `Sergey Lavrentyev` `https://www.linkedin.com/in/sergey-lavrentyev-16630854`, all `Dubai, UAE`).
 
 ---
 
@@ -266,6 +253,8 @@ HOST=0.0.0.0
 CORS_ORIGINS=http://localhost:4000,http://127.0.0.1:4000
 RATE_LIMIT_REQUESTS=30
 RATE_LIMIT_WINDOW_SECONDS=60
+RATE_LIMIT_MAX_CLIENTS=10000
+TRUSTED_PROXIES=
 
 SEARCH_PROVIDER=auto
 SERPER_API_KEY=your_serper_api_key_here
@@ -299,7 +288,7 @@ python scripts/smoke_test.py
 
 ## 11. Automated Testing & CI Matrix
 
-The test suite contains **136 automated unit and integration tests** in `tests/test_prospect_discovery.py` and runs automatically across Python `3.10`, `3.11`, `3.12`, and `3.14` in [`.github/workflows/ci.yml`](.github/workflows/ci.yml):
+The test suite contains **146 automated unit and integration tests** in `tests/test_prospect_discovery.py` and runs automatically across Python `3.10`, `3.11`, `3.12`, and `3.14` in [`.github/workflows/ci.yml`](.github/workflows/ci.yml):
 
 ```bash
 pytest tests/ -v
@@ -328,4 +317,4 @@ For Render / Railway / Cloud Run: point start command to `uvicorn app.main:app -
 - [x] **Modern LLM SDKs & Fallback**: `openai`, `google-genai`, `anthropic` (`output_config.format`), chaining sequentially before heuristics.
 - [x] **Security Hardening**: Operator-injection sanitization, `429` rate limiter, 64 KB body cap, IPv4/IPv6 checks, non-root Docker, clean Git history.
 - [x] **Result Accuracy**: Strict relevance filtering, conflict-safe deduplication, evidence-only locations, official WhatsApp URL normalization.
-- [x] **Test Coverage & CI**: **136/136** tests passing locally + GitHub Actions matrix (`3.10`, `3.11`, `3.12`, `3.14`).
+- [x] **Test Coverage & CI**: **146/146** tests passing locally + GitHub Actions matrix (`3.10`, `3.11`, `3.12`, `3.14`).

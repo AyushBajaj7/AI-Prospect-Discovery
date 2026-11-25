@@ -20,6 +20,7 @@ from app.services.search_service import SearchHit, SearchService, search_service
 from app.utils.normalizers import (
     LOCATION_ALIASES,
     clean_name,
+    classify_candidate_entity,
     extract_handle,
     location_matches_text,
     normalize_location,
@@ -27,6 +28,7 @@ from app.utils.normalizers import (
 from app.utils.validators import (
     PLATFORM_PATTERNS,
     clean_url,
+    format_tel_uri,
     is_valid_profile_url,
     normalize_whatsapp_url,
     sanitize_search_term,
@@ -219,13 +221,18 @@ class BasePlatformAdapter(ABC):
             for email in contacts["emails"]:
                 social_links.append(SocialLink(platform="Email", link=f"mailto:{email}"))
             for phone in contacts["phones"]:
-                social_links.append(SocialLink(platform="Phone", link=f"tel:{phone}"))
+                tel_uri = format_tel_uri(phone)
+                if tel_uri:
+                    social_links.append(SocialLink(platform="Phone", link=tel_uri))
             for wa in contacts["whatsapp_links"]:
                 wa_norm = normalize_whatsapp_url(wa)
                 if wa_norm:
                     social_links.append(SocialLink(platform="WhatsApp", link=wa_norm))
 
             handle = extract_handle(profile_url, self.platform_name)
+            entity_type = classify_candidate_entity(
+                name, self.platform_name, profile_url, title, snippet
+            )
 
             candidates.append(
                 RawCandidate(
@@ -239,7 +246,10 @@ class BasePlatformAdapter(ABC):
                     phones=contacts["phones"],
                     whatsapp_links=contacts["whatsapp_links"],
                     social_links=social_links,
-                    verification_status="verified_profile" if is_verified_social else "public_web",
+                    verification_status=(
+                        "url_format_validated" if is_verified_social else "search_indexed_web"
+                    ),
+                    entity_type=entity_type,
                     metadata={"handle": handle},
                 )
             )

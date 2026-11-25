@@ -29,10 +29,11 @@ from app.services.deduplication_service import deduplication_service
 from app.services.llm_service import KNOWN_LOCATIONS, llm_service
 from app.services.query_service import query_service
 from app.services.relevance_service import relevance_service
-from app.services.search_service import SearchService
-from app.utils.normalizers import clean_name, extract_handle
+from app.services.search_service import SearchOutcome, SearchService
+from app.utils.normalizers import clean_name, classify_candidate_entity, extract_handle
 from app.utils.validators import (
     clean_url,
+    format_tel_uri,
     is_valid_email,
     is_valid_phone,
     is_valid_profile_url,
@@ -44,11 +45,13 @@ client = TestClient(app, raise_server_exceptions=False)
 
 
 @pytest.fixture(autouse=True)
-def _reset_rate_limiter_per_test():
-    """Keep per-IP sliding window deterministic across isolated test cases."""
+def _reset_rate_limiter_and_query_cache_per_test():
+    """Keep per-IP sliding window and intent cache deterministic across tests."""
     RateLimitMiddleware.reset()
+    query_service.clear_cache()
     yield
     RateLimitMiddleware.reset()
+    query_service.clear_cache()
 
 
 # ===========================================================================
@@ -280,7 +283,7 @@ class TestValidators:
 
     def test_clean_url_strips_trailing_slash(self):
         url = "https://linkedin.com/in/johndoe/"
-        assert clean_url(url) == "https://linkedin.com/in/johndoe"
+        assert clean_url(url) == "https://www.linkedin.com/in/johndoe"
 
 
 # ===========================================================================
@@ -1143,28 +1146,358 @@ class TestSecurityAndAccuracyAuditFixes:
         monkeypatch.setattr(svc, "_search_ddg", timeout_ddg)
 
         outcome = asyncio.run(svc.search_with_status("test query", 5))
-        assert outcome.status == SearchStatus.TIMEOUT
+        assert outcome.status == SearchStatus.RATE_LIMITED
         assert outcome.hits == []
         assert len(svc._cache) == 0  # failed / empty search is never cached
 
     def test_provider_health_present_and_tracks_rate_limits_and_timeouts(self, monkeypatch):
         from app.platforms import ALL_PLATFORMS
-        from app.services.search_service import SearchOutcome
 
         monkeypatch.setattr(
             "app.services.search_service.search_service.search_with_status",
             AsyncMock(return_value=SearchOutcome(hits=[], status=SearchStatus.RATE_LIMITED, provider="ddg")),
         )
-        # Ensure .search isn't treated as instance monkeypatch
-        resp = client.post(
+        # Default response strictly matches assessment keys (no extra provider_health key)
+        resp_default = client.post(
             "/prospect-discovery",
             json={"query": "Startup founders in London UK"},
         )
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["provider_health"] is not None
-        assert body["provider_health"]["platforms_rate_limited"] == len(ALL_PLATFORMS)
-        assert body["provider_health"]["platforms_succeeded"] == 0
+        assert resp_default.status_code == 200
+        body_default = resp_default.json()
+        assert set(body_default.keys()) == {"success", "query", "total_prospects", "prospects"}
+        assert resp_default.headers.get("X-Platforms-Failed") == str(len(ALL_PLATFORMS))
+
+        # Diagnostics mode exposes provider_health in response body
+        resp_diag = client.post(
+            "/prospect-discovery?include_diagnostics=true",
+            json={"query": "Startup founders in London UK"},
+        )
+        assert resp_diag.status_code == 200
+        body_diag = resp_diag.json()
+        assert body_diag["provider_health"] is not None
+        assert body_diag["provider_health"]["platforms_rate_limited"] == len(ALL_PLATFORMS)
+        assert body_diag["provider_health"]["platforms_succeeded"] == 0
+
+
+# ===========================================================================
+# 13. Security & accuracy remediation tests (XFF, LRU, SDKs, entities, tel)
+# ===========================================================================
+
+class TestP0ThroughP3Remediation:
+
+    def test_spoofed_x_forwarded_for_ignored_when_proxy_untrusted(self, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "TRUSTED_PROXIES", "")
+        monkeypatch.setattr(settings, "RATE_LIMIT_REQUESTS", 2)
+        monkeypatch.setattr(settings, "RATE_LIMIT_WINDOW_SECONDS", 60)
+        monkeypatch.setattr(
+            "app.services.search_service.search_service.search_with_status",
+            AsyncMock(return_value=SearchOutcome(hits=[], status=SearchStatus.NO_RESULTS, provider="ddg")),
+        )
+        RateLimitMiddleware.reset()
+
+        for fake_ip in ("198.51.100.1", "198.51.100.2"):
+            r = client.post(
+                "/prospect-discovery",
+                json={"query": "Startup founders in London UK"},
+                headers={"X-Forwarded-For": fake_ip},
+            )
+            assert r.status_code == 200
+
+        # Third request with yet another spoofed XFF must still be rate-limited!
+        blocked = client.post(
+            "/prospect-discovery",
+            json={"query": "Startup founders in London UK"},
+            headers={"X-Forwarded-For": "198.51.100.99"},
+        )
+        assert blocked.status_code == 429
+
+    def test_x_forwarded_for_respected_only_from_trusted_proxy(self, monkeypatch):
+        import httpx
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "TRUSTED_PROXIES", "10.0.0.0/8")
+        monkeypatch.setattr(settings, "RATE_LIMIT_REQUESTS", 1)
+        monkeypatch.setattr(settings, "RATE_LIMIT_WINDOW_SECONDS", 60)
+        monkeypatch.setattr(
+            "app.services.search_service.search_service.search_with_status",
+            AsyncMock(return_value=SearchOutcome(hits=[], status=SearchStatus.NO_RESULTS, provider="ddg")),
+        )
+        RateLimitMiddleware.reset()
+
+        async def _run():
+            transport = httpx.ASGITransport(app=app, client=("10.0.0.1", 50000))
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as ac:
+                r1 = await ac.post(
+                    "/prospect-discovery",
+                    json={"query": "Startup founders in London UK"},
+                    headers={"X-Forwarded-For": "203.0.113.10, 10.0.0.5"},
+                )
+                assert r1.status_code == 200
+
+                # Same client IP via trusted proxy hits 429
+                r1_dup = await ac.post(
+                    "/prospect-discovery",
+                    json={"query": "Startup founders in London UK"},
+                    headers={"X-Forwarded-For": "203.0.113.10, 10.0.0.5"},
+                )
+                assert r1_dup.status_code == 429
+
+                # Different client IP behind trusted proxy gets its own quota
+                r2 = await ac.post(
+                    "/prospect-discovery",
+                    json={"query": "Startup founders in London UK"},
+                    headers={"X-Forwarded-For": "203.0.113.11"},
+                )
+                assert r2.status_code == 200
+
+        asyncio.run(_run())
+
+    def test_rate_limit_store_prunes_expired_and_bounds_max_clients(self, monkeypatch):
+        import httpx
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "TRUSTED_PROXIES", "10.0.0.0/8")
+        monkeypatch.setattr(settings, "RATE_LIMIT_REQUESTS", 5)
+        monkeypatch.setattr(settings, "RATE_LIMIT_WINDOW_SECONDS", 60)
+        monkeypatch.setattr(settings, "RATE_LIMIT_MAX_CLIENTS", 5)
+        monkeypatch.setattr(
+            "app.services.search_service.search_service.search_with_status",
+            AsyncMock(return_value=SearchOutcome(hits=[], status=SearchStatus.NO_RESULTS, provider="ddg")),
+        )
+        RateLimitMiddleware.reset()
+
+        async def _run():
+            transport = httpx.ASGITransport(app=app, client=("10.0.0.1", 50000))
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as ac:
+                for i in range(12):
+                    resp = await ac.post(
+                        "/prospect-discovery",
+                        json={"query": "Startup founders in London UK"},
+                        headers={"X-Forwarded-For": f"203.0.113.{i + 1}"},
+                    )
+                    assert resp.status_code == 200
+
+        asyncio.run(_run())
+        # Must strictly cap at RATE_LIMIT_MAX_CLIENTS (never unbounded growth)
+        assert len(RateLimitMiddleware._hits) == 5
+        # Oldest 7 IPs were evicted; newest 5 remain
+        assert "203.0.113.12" in RateLimitMiddleware._hits
+        assert "203.0.113.1" not in RateLimitMiddleware._hits
+
+        # Expired buckets must be pruned automatically on next check
+        RateLimitMiddleware._hits["203.0.113.10"].clear()
+        RateLimitMiddleware._prune_buckets(now=10**9, window=60, max_clients=5)
+        assert len(RateLimitMiddleware._hits) == 0
+
+    def test_sdk_minimum_requirements_and_structured_output_apis(self):
+        from pathlib import Path
+        import inspect
+        import anthropic
+        from google import genai
+        from google.genai import types
+        from openai import AsyncOpenAI
+
+        req_text = (Path(__file__).resolve().parent.parent / "requirements.txt").read_text()
+        assert "anthropic>=0.77.0" in req_text
+        assert "google-genai>=1.0.0" in req_text
+        assert "openai>=1.50.0" in req_text
+
+        assert hasattr(anthropic, "transform_schema")
+        transformed = anthropic.transform_schema(StructuredIntent)
+        assert isinstance(transformed, dict)
+        assert "output_config" in inspect.signature(anthropic.AsyncAnthropic(api_key="t").messages.create).parameters
+
+        cfg = types.GenerateContentConfig(
+            system_instruction="test",
+            response_mime_type="application/json",
+            response_schema=StructuredIntent,
+        )
+        assert cfg.response_schema is StructuredIntent
+
+        assert hasattr(AsyncOpenAI(api_key="t").beta.chat.completions, "parse")
+
+    def test_linkedin_regional_subdomains_canonicalized_and_deduplicated(self):
+        u1 = clean_url("https://uk.linkedin.com/in/alex-morgan/")
+        u2 = clean_url("https://ge.linkedin.com/in/alex-morgan?trk=public")
+        u3 = clean_url("https://www.linkedin.com/in/alex-morgan")
+        assert u1 == "https://www.linkedin.com/in/alex-morgan"
+        assert u2 == "https://www.linkedin.com/in/alex-morgan"
+        assert u3 == "https://www.linkedin.com/in/alex-morgan"
+
+        c1 = RawCandidate(
+            platform="LinkedIn",
+            name="Alex Morgan",
+            location="London, UK",
+            profile_url=u1,
+            social_links=[SocialLink(platform="LinkedIn", link=u1)],
+        )
+        c2 = RawCandidate(
+            platform="LinkedIn",
+            name="Alex Morgan",
+            location="London, UK",
+            profile_url=u2,
+            social_links=[SocialLink(platform="LinkedIn", link=u2)],
+        )
+        prospects = deduplication_service.consolidate([c1, c2])
+        assert len(prospects) == 1
+        assert len(prospects[0].social_link) == 1
+        assert prospects[0].social_link[0].link == "https://www.linkedin.com/in/alex-morgan"
+
+    def test_tel_uri_rfc3966_formatted_without_spaces(self):
+        from app.services.profile_extractor import profile_extractor
+
+        assert format_tel_uri("+44 20 7946 0991") == "tel:+442079460991"
+        assert format_tel_uri("+1 (202) 555-0199") == "tel:+12025550199"
+
+        cand = RawCandidate(
+            platform="Google",
+            name="Alex Morgan",
+            profile_url="https://about.me/alexmorgan",
+            title="Alex Morgan",
+            snippet="Call me at +44 20 7946 0991 in London",
+        )
+        enriched = profile_extractor.enrich_candidate(
+            cand,
+            StructuredIntent(interest="Startups", audience="Startup founders"),
+        )
+        tel_links = [sl.link for sl in enriched.social_links if sl.platform == "Phone"]
+        assert tel_links == ["tel:+442079460991"]
+
+    def test_verification_status_honestly_labeled(self, monkeypatch):
+        from app.platforms.google import GoogleAdapter
+        from app.platforms.linkedin import LinkedInAdapter
+
+        monkeypatch.setattr(
+            "app.services.search_service.search_service.search",
+            AsyncMock(return_value=[{
+                "title": "Alex Morgan - Startup Founder | LinkedIn",
+                "link": "https://uk.linkedin.com/in/alexmorgan",
+                "snippet": "Founder in London, UK",
+            }]),
+        )
+        li_hits = asyncio.run(
+            LinkedInAdapter().discover(StructuredIntent(interest="Startups", audience="Startup founders"))
+        )
+        assert len(li_hits) == 1
+        assert li_hits[0].verification_status == "url_format_validated"
+
+        monkeypatch.setattr(
+            "app.services.search_service.search_service.search",
+            AsyncMock(return_value=[{
+                "title": "Alex Morgan",
+                "link": "https://about.me/alexmorgan",
+                "snippet": "Founder in London, UK",
+            }]),
+        )
+        g_hits = asyncio.run(
+            GoogleAdapter().discover(StructuredIntent(interest="Startups", audience="Startup founders"))
+        )
+        assert len(g_hits) == 1
+        assert g_hits[0].verification_status == "search_indexed_web"
+
+    def test_target_type_and_parody_filtering_removes_orgs_and_gimmicks(self):
+        intent_ind = StructuredIntent(
+            interest="Startups",
+            audience="Startup founders",
+            location=LocationDetails(city="London", country="UK"),
+            target_type="individual",
+        )
+        person = RawCandidate(
+            platform="LinkedIn",
+            name="Rahim Nathwani",
+            location="London, UK",
+            profile_url="https://www.linkedin.com/in/rahimnathwani",
+            title="Rahim Nathwani - Co-Founder | LinkedIn",
+            snippet="Startup founder in London, UK.",
+            entity_type=classify_candidate_entity(
+                "Rahim Nathwani", "LinkedIn", "https://www.linkedin.com/in/rahimnathwani"
+            ),
+        )
+        org = RawCandidate(
+            platform="Google",
+            name="London Founder's Network",
+            location="London, UK",
+            profile_url="https://www.londonfoundersnetwork.com",
+            title="London Founder's Network",
+            snippet="Community for startup founders in London, UK.",
+            entity_type=classify_candidate_entity(
+                "London Founder's Network", "Google", "https://www.londonfoundersnetwork.com"
+            ),
+        )
+        parody = RawCandidate(
+            platform="X",
+            name="Parody Kartik Sharma",
+            location="London, UK",
+            profile_url="https://x.com/parodykartik",
+            title="Parody Kartik Sharma (@parodykartik) / X",
+            snippet="Startup founder parody memes in London UK.",
+            entity_type=classify_candidate_entity(
+                "Parody Kartik Sharma", "X", "https://x.com/parodykartik"
+            ),
+        )
+        gimmick = RawCandidate(
+            platform="X",
+            name="king of cricketer",
+            location="London, UK",
+            profile_url="https://x.com/kingcricketer",
+            title="king of cricketer / X",
+            snippet="Startup founders London UK.",
+            entity_type=classify_candidate_entity(
+                "king of cricketer", "X", "https://x.com/kingcricketer"
+            ),
+        )
+        kept = relevance_service.filter_relevant_candidates([person, org, parody, gimmick], intent_ind)
+        assert [c.name for c in kept] == ["Rahim Nathwani"]
+
+    def test_query_service_caches_exact_provider_without_global_bleed(self, monkeypatch):
+        query_service.clear_cache()
+
+        async def mock_parse(q: str):
+            llm_service.stats["provider_used"] = "openai" if "london" in q.lower() else "gemini"
+            return (
+                StructuredIntent(interest="Startups", audience="Founders"),
+                llm_service.stats["provider_used"],
+            )
+
+        monkeypatch.setattr(llm_service, "parse_query_with_provider", mock_parse)
+
+        _, p1 = asyncio.run(query_service.get_structured_intent_with_provider("Founders in London"))
+        assert p1 == "openai"
+
+        # Another unrelated query mutates llm_service.stats['provider_used'] to 'gemini'
+        _, p2 = asyncio.run(query_service.get_structured_intent_with_provider("Founders in Berlin"))
+        assert p2 == "gemini"
+
+        # Re-querying cached first query must still report 'openai', NOT 'gemini'
+        _, p1_cached = asyncio.run(query_service.get_structured_intent_with_provider("Founders in London"))
+        assert p1_cached == "openai"
+
+    def test_search_status_preserves_rate_limit_over_trailing_no_results(self, monkeypatch):
+        from app.config import settings
+
+        svc = SearchService()
+        monkeypatch.setattr(settings, "SEARCH_PROVIDER", "auto")
+        monkeypatch.setattr(settings, "SERPER_API_KEY", "s-key")
+        monkeypatch.setattr(settings, "BRAVE_API_KEY", "b-key")
+
+        monkeypatch.setattr(
+            svc, "_search_serper",
+            AsyncMock(return_value=SearchOutcome(hits=[], status=SearchStatus.RATE_LIMITED, provider="serper")),
+        )
+        monkeypatch.setattr(
+            svc, "_search_brave",
+            AsyncMock(return_value=SearchOutcome(hits=[], status=SearchStatus.NO_RESULTS, provider="brave")),
+        )
+        monkeypatch.setattr(
+            svc, "_search_ddg",
+            AsyncMock(return_value=SearchOutcome(hits=[], status=SearchStatus.NO_RESULTS, provider="ddg")),
+        )
+
+        outcome = asyncio.run(svc.search_with_status("test fallback aggregation", 5))
+        assert outcome.status == SearchStatus.RATE_LIMITED
+
 
 
 

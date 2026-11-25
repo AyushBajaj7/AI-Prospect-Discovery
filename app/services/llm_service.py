@@ -479,10 +479,11 @@ class LLMService:
     # ------------------------------------------------------------------
     # Public parser
     # ------------------------------------------------------------------
-    async def parse_query(self, query: str) -> StructuredIntent:
+    async def parse_query_with_provider(self, query: str) -> tuple[StructuredIntent, str]:
         """
         Attempt configured LLM providers sequentially with native structured
         outputs, falling back across providers before deterministic heuristics.
+        Returns `(StructuredIntent, used_provider)`.
         """
         start = time.perf_counter()
         timeout_sec = float(settings.SEARCH_TIMEOUT_SECONDS)
@@ -521,7 +522,12 @@ class LLMService:
         self.stats["provider_used"] = used_provider
         self.stats["provider_attempts"] = attempts or ["heuristic_fallback"]
 
-        return result_intent
+        return result_intent, used_provider
+
+    async def parse_query(self, query: str) -> StructuredIntent:
+        """Return only the parsed StructuredIntent for `query`."""
+        intent, _ = await self.parse_query_with_provider(query)
+        return intent
 
 
 llm_service = LLMService()

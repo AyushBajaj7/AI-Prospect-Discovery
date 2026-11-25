@@ -159,6 +159,23 @@ class RelevanceService:
     ) -> List[RawCandidate]:
         relevant: List[RawCandidate] = []
         for cand in candidates:
+            # Exclude explicit parody/meme/gimmick accounts
+            if cand.entity_type == "parody_or_gimmick":
+                logger.debug("Filtered parody/gimmick candidate '%s'", cand.name)
+                continue
+
+            # Enforce intent.target_type alignment before consolidation
+            if intent.target_type == "individual" and cand.entity_type == "business":
+                logger.debug(
+                    "Filtered organization '%s' for individual-target query", cand.name
+                )
+                continue
+            if intent.target_type == "business" and cand.entity_type == "individual":
+                logger.debug(
+                    "Filtered individual '%s' for business-target query", cand.name
+                )
+                continue
+
             score, breakdown = self.evaluate_candidate(cand, intent)
             cand.relevance_score = score
             cand.metadata["score_breakdown"] = breakdown

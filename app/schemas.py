@@ -185,5 +185,8 @@ class RawCandidate(BaseModel):
     whatsapp_links: List[str] = Field(default_factory=list)
     social_links: List[SocialLink] = Field(default_factory=list)
     relevance_score: float = 0.0
-    verification_status: Literal["verified_profile", "public_web", "partial"] = "public_web"
+    verification_status: Literal["url_format_validated", "search_indexed_web", "unverified"] = (
+        "search_indexed_web"
+    )
+    entity_type: Literal["individual", "business", "parody_or_gimmick"] = "individual"
     metadata: Dict[str, Any] = Field(default_factory=dict)

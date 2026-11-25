@@ -248,6 +248,7 @@ def is_valid_phone(phone: str) -> bool:
 def clean_url(url: str) -> str:
     """
     Strip tracking/locale query parameters, fragments, and trailing slashes from a URL,
+    canonicalize regional LinkedIn subdomains (uk.linkedin.com -> www.linkedin.com),
     and normalize WhatsApp URLs to digit-only https://wa.me/<digits>.
     """
     if not url:
@@ -259,6 +260,12 @@ def clean_url(url: str) -> str:
 
     try:
         parsed = urlparse(stripped)
+        netloc = parsed.netloc.lower()
+        hostname = (parsed.hostname or "").lower()
+        # Canonicalize regional LinkedIn domains (e.g., uk.linkedin.com, ge.linkedin.com, linkedin.com)
+        if re.match(r"^(?:[a-z]{2,3}\.)?linkedin\.com$", hostname):
+            netloc = "www.linkedin.com"
+
         clean_qs = [
             (k, v)
             for k, v in parse_qsl(parsed.query)
@@ -268,7 +275,7 @@ def clean_url(url: str) -> str:
         return urlunparse(
             (
                 parsed.scheme.lower(),
-                parsed.netloc.lower(),
+                netloc,
                 path,
                 parsed.params,
                 urlencode(clean_qs),
@@ -277,6 +284,19 @@ def clean_url(url: str) -> str:
         )
     except Exception:
         return url
+
+
+def format_tel_uri(phone: str) -> str:
+    """
+    Format a validated phone string as an RFC 3966-compliant `tel:` URI
+    without spaces or visual separator characters (e.g. `tel:+442079460991`).
+    """
+    stripped = (phone or "").strip()
+    has_plus = stripped.startswith("+")
+    digits = re.sub(r"\D", "", stripped)
+    if not digits:
+        return ""
+    return f"tel:+{digits}" if has_plus else f"tel:{digits}"
 
 
 def is_valid_profile_url(platform: str, url: str) -> bool:

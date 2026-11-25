@@ -95,13 +95,30 @@ class SearchService:
         async with httpx.AsyncClient(timeout=self._timeout, limits=self._limits) as temp_client:
             return await fn(temp_client)
 
+    @staticmethod
+    def _aggregate_failure_status(statuses: List[SearchStatus]) -> SearchStatus:
+        """
+        Aggregate status across attempted providers when all produce 0 hits so
+        upstream failures (RATE_LIMITED / TIMEOUT / PROVIDER_ERROR) are never
+        masked by a final fallback returning NO_RESULTS.
+        """
+        priority = (
+            SearchStatus.RATE_LIMITED,
+            SearchStatus.TIMEOUT,
+            SearchStatus.PROVIDER_ERROR,
+            SearchStatus.NO_RESULTS,
+        )
+        for st in priority:
+            if st in statuses:
+                return st
+        return SearchStatus.NO_RESULTS
+
     async def search_with_status(
         self, query: str, num_results: int = 5
     ) -> SearchOutcome:
         """
         Execute a search and return `SearchOutcome` containing both `hits` and
-        explicit `SearchStatus` (`SUCCESS`, `NO_RESULTS`, `RATE_LIMITED`,
-        `TIMEOUT`, or `PROVIDER_ERROR`).
+        an aggregated `SearchStatus` across the entire fallback chain.
         """
         if not query or not query.strip():
             return SearchOutcome(hits=[], status=SearchStatus.NO_RESULTS, provider="none")
@@ -131,7 +148,8 @@ class SearchService:
             candidates.append("ddg")
 
         async with self._semaphore:
-            last_outcome = SearchOutcome(hits=[], status=SearchStatus.NO_RESULTS, provider="none")
+            attempted_statuses: List[SearchStatus] = []
+            last_provider = "none"
             for prov in candidates:
                 if prov == "serper":
                     outcome = await self._search_serper(query, num_results)
@@ -143,9 +161,14 @@ class SearchService:
                 if outcome.hits:
                     self._put_cache(query, num_results, outcome.hits, outcome.provider)
                     return outcome
-                last_outcome = outcome
+                attempted_statuses.append(outcome.status)
+                last_provider = outcome.provider
 
-            return last_outcome
+            return SearchOutcome(
+                hits=[],
+                status=self._aggregate_failure_status(attempted_statuses),
+                provider=last_provider,
+            )
 
     async def search(self, query: str, num_results: int = 5) -> List[SearchHit]:
         """Backward-compatible helper returning hits list."""

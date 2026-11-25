@@ -12,8 +12,8 @@ from urllib.parse import urlparse
 from app.platforms.base import BasePlatformAdapter
 from app.platforms.contacts import extract_all_contacts
 from app.schemas import RawCandidate, SocialLink, StructuredIntent
-from app.utils.normalizers import clean_name, extract_handle
-from app.utils.validators import clean_url, is_valid_profile_url, normalize_whatsapp_url
+from app.utils.normalizers import clean_name, classify_candidate_entity, extract_handle
+from app.utils.validators import clean_url, format_tel_uri, is_valid_profile_url, normalize_whatsapp_url
 
 
 def _classify_source_platform(url: str) -> Optional[str]:
@@ -83,7 +83,9 @@ class EmailAdapter(BasePlatformAdapter):
             for email in emails:
                 social_links.append(SocialLink(platform="Email", link=f"mailto:{email}"))
             for phone in contacts["phones"]:
-                social_links.append(SocialLink(platform="Phone", link=f"tel:{phone}"))
+                tel_uri = format_tel_uri(phone)
+                if tel_uri:
+                    social_links.append(SocialLink(platform="Phone", link=tel_uri))
             for wa in contacts["whatsapp_links"]:
                 wa_norm = normalize_whatsapp_url(wa)
                 if wa_norm:
@@ -104,7 +106,10 @@ class EmailAdapter(BasePlatformAdapter):
                     whatsapp_links=contacts["whatsapp_links"],
                     social_links=social_links,
                     verification_status=(
-                        "verified_profile" if source_platform != "Google" else "public_web"
+                        "url_format_validated" if source_platform != "Google" else "search_indexed_web"
+                    ),
+                    entity_type=classify_candidate_entity(
+                        name, source_platform, page_url, title, snippet
                     ),
                     metadata={"handle": handle},
                 )

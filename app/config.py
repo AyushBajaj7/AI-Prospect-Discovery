@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     # Redis or API gateway rate-limiting in multi-worker deployments).
     RATE_LIMIT_REQUESTS: int = Field(default=30, ge=1, le=10000)
     RATE_LIMIT_WINDOW_SECONDS: int = Field(default=60, ge=1, le=3600)
+    RATE_LIMIT_MAX_CLIENTS: int = Field(default=10000, ge=100, le=500000)
+    # Comma-separated trusted proxy IPs or CIDRs allowed to set X-Forwarded-For.
+    # Empty (default) disables trusting X-Forwarded-For headers from callers.
+    TRUSTED_PROXIES: str = ""
 
     # ------------------------------------------------------------------ #
     # Search providers
@@ -96,6 +100,10 @@ class Settings(BaseSettings):
     def allowed_origins(self) -> List[str]:
         """Returns the parsed list of allowed CORS origins."""
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+
+    def trusted_proxies(self) -> List[str]:
+        """Returns the parsed list of trusted proxy IP/CIDR entries."""
+        return [p.strip() for p in self.TRUSTED_PROXIES.split(",") if p.strip()]
 
 
 settings = Settings()

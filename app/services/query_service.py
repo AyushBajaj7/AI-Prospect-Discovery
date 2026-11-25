@@ -1,5 +1,7 @@
 """
-Query service – wraps LLM intent parsing with a bounded TTL in-process cache.
+Query service – wraps LLM intent parsing with a bounded TTL+LRU cache.
+Stores both the parsed StructuredIntent AND the provider name that generated
+it so cached responses never report stale provider metadata from another request.
 """
 from __future__ import annotations
 
@@ -15,13 +17,17 @@ from app.services.llm_service import llm_service
 class QueryService:
 
     def __init__(self) -> None:
-        # {normalised_query: (cached_at_monotonic, StructuredIntent)}
-        self._cache: OrderedDict[str, Tuple[float, StructuredIntent]] = OrderedDict()
+        # {normalised_query: (cached_at_monotonic, StructuredIntent, provider_used)}
+        self._cache: OrderedDict[str, Tuple[float, StructuredIntent, str]] = OrderedDict()
+
+    def clear_cache(self) -> None:
+        """Clear cached intents (useful in test isolation)."""
+        self._cache.clear()
 
     def _evict_if_needed(self, now: float) -> None:
         """Remove expired entries and enforce CACHE_MAX_SIZE bound (LRU)."""
         expired = [
-            k for k, (ts, _) in self._cache.items()
+            k for k, (ts, _, _) in self._cache.items()
             if now - ts >= settings.CACHE_TTL_SECONDS
         ]
         for k in expired:
@@ -29,24 +35,30 @@ class QueryService:
         while len(self._cache) >= settings.CACHE_MAX_SIZE:
             self._cache.popitem(last=False)
 
-    async def get_structured_intent(self, query: str) -> StructuredIntent:
+    async def get_structured_intent_with_provider(
+        self, query: str
+    ) -> Tuple[StructuredIntent, str]:
         """
-        Return the parsed StructuredIntent for `query`, using the bounded TTL
-        in-process cache to avoid redundant LLM calls for identical queries.
+        Return `(StructuredIntent, provider_used)` for `query` from cache or LLM.
         """
         cache_key = " ".join(query.strip().lower().split())
         now = time.monotonic()
 
         if cache_key in self._cache:
-            cached_at, intent = self._cache[cache_key]
+            cached_at, intent, provider = self._cache[cache_key]
             if now - cached_at < settings.CACHE_TTL_SECONDS:
                 self._cache.move_to_end(cache_key)
-                return intent
+                return intent, provider
             del self._cache[cache_key]
 
-        intent = await llm_service.parse_query(query)
+        intent, provider = await llm_service.parse_query_with_provider(query)
         self._evict_if_needed(now)
-        self._cache[cache_key] = (now, intent)
+        self._cache[cache_key] = (now, intent, provider)
+        return intent, provider
+
+    async def get_structured_intent(self, query: str) -> StructuredIntent:
+        """Return only the StructuredIntent for `query`."""
+        intent, _ = await self.get_structured_intent_with_provider(query)
         return intent
 
 

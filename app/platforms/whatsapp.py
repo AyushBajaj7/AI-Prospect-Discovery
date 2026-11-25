@@ -11,8 +11,8 @@ from typing import List
 from app.platforms.base import BasePlatformAdapter
 from app.platforms.contacts import extract_all_contacts
 from app.schemas import RawCandidate, SocialLink, StructuredIntent
-from app.utils.normalizers import clean_name
-from app.utils.validators import is_valid_profile_url, normalize_whatsapp_url
+from app.utils.normalizers import clean_name, classify_candidate_entity
+from app.utils.validators import format_tel_uri, is_valid_profile_url, normalize_whatsapp_url
 
 
 class WhatsAppAdapter(BasePlatformAdapter):
@@ -63,7 +63,9 @@ class WhatsAppAdapter(BasePlatformAdapter):
             for email in contacts["emails"]:
                 social_links.append(SocialLink(platform="Email", link=f"mailto:{email}"))
             for phone in contacts["phones"]:
-                social_links.append(SocialLink(platform="Phone", link=f"tel:{phone}"))
+                tel_uri = format_tel_uri(phone)
+                if tel_uri:
+                    social_links.append(SocialLink(platform="Phone", link=tel_uri))
 
             candidates.append(
                 RawCandidate(
@@ -77,7 +79,10 @@ class WhatsAppAdapter(BasePlatformAdapter):
                     phones=contacts["phones"],
                     whatsapp_links=wa_links,
                     social_links=social_links,
-                    verification_status="verified_profile",
+                    verification_status="url_format_validated",
+                    entity_type=classify_candidate_entity(
+                        name, "WhatsApp", wa_links[0], title, snippet
+                    ),
                 )
             )
 

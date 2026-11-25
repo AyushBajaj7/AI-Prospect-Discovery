@@ -5,20 +5,22 @@ Security & reliability hardening:
 - Explicit CORS origins allowlist (never wildcard with credentials).
 - Pure ASGI BodySizeLimitMiddleware enforcing a strict 64 KB cap (including chunked).
 - Pure ASGI RequestIDMiddleware attaching X-Request-ID to every response.
-- Pure ASGI RateLimitMiddleware (sliding window per client IP on POST /prospect-discovery).
+- Pure ASGI RateLimitMiddleware with anti-spoof X-Forwarded-For trust validation
+  and bounded LRU + expired-bucket eviction.
 - Shared HTTPX connection pool managed via FastAPI lifespan.
 - Sanitized error handlers (never leak stack traces or exception messages).
 """
 from __future__ import annotations
 
+import ipaddress
 import logging
 import time
 import uuid
-from collections import defaultdict, deque
+from collections import OrderedDict, deque
 from contextlib import asynccontextmanager
-from typing import Any, Deque, Dict, Optional
+from typing import Any, Deque, Dict
 
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -66,14 +68,21 @@ app = FastAPI(
 
 # ---------------------------------------------------------------------------
 # Pure ASGI Middleware: per-IP sliding-window rate limiter
-# Note: Process-local storage protects single-worker instances; use Redis or
-# gateway throttling in multi-worker / clustered deployments.
 # ---------------------------------------------------------------------------
 class RateLimitMiddleware:
-    """Sliding-window per-client-IP rate limiter for POST /prospect-discovery."""
+    """
+    Bounded sliding-window per-client-IP rate limiter for POST /prospect-discovery.
 
-    # Class-level store reference cleared easily in unit tests if needed
-    _hits: Dict[str, Deque[float]] = defaultdict(deque)
+    Security notes:
+      * Ignores caller-supplied X-Forwarded-For unless the direct peer IP matches
+        `settings.TRUSTED_PROXIES`.
+      * Evicts expired IP buckets and enforces `RATE_LIMIT_MAX_CLIENTS` LRU cap
+        so client-rotation attacks cannot exhaust server memory.
+      * Process-local storage protects single-worker instances; use Redis or
+        gateway throttling in multi-worker / clustered deployments.
+    """
+
+    _hits: OrderedDict[str, Deque[float]] = OrderedDict()
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -84,13 +93,55 @@ class RateLimitMiddleware:
         cls._hits.clear()
 
     @staticmethod
-    def _client_ip(scope: Scope) -> str:
+    def _is_trusted_proxy(ip_str: str) -> bool:
+        trusted = settings.trusted_proxies()
+        if not trusted or not ip_str:
+            return False
+        for entry in trusted:
+            if entry == ip_str:
+                return True
+            try:
+                if ipaddress.ip_address(ip_str) in ipaddress.ip_network(entry, strict=False):
+                    return True
+            except ValueError:
+                continue
+        return False
+
+    @classmethod
+    def _client_ip(cls, scope: Scope) -> str:
+        client = scope.get("client")
+        peer_ip = client[0] if client else "unknown"
+        if not cls._is_trusted_proxy(peer_ip):
+            return peer_ip
+
         headers = {k.lower(): v for k, v in scope.get("headers", [])}
         forwarded = headers.get(b"x-forwarded-for")
-        if forwarded:
-            return forwarded.decode("latin-1").split(",")[0].strip() or "unknown"
-        client = scope.get("client")
-        return client[0] if client else "unknown"
+        if not forwarded:
+            return peer_ip
+
+        chain = [
+            part.strip()
+            for part in forwarded.decode("latin-1").split(",")
+            if part.strip()
+        ]
+        # Walk right-to-left skipping known trusted proxies to prevent XFF spoofing
+        for hop in reversed(chain):
+            if not cls._is_trusted_proxy(hop):
+                return hop
+        return chain[0] if chain else peer_ip
+
+    @classmethod
+    def _prune_buckets(cls, now: float, window: int, max_clients: int) -> None:
+        expired_keys = [
+            key
+            for key, bucket in cls._hits.items()
+            if not bucket or (now - bucket[-1]) >= window
+        ]
+        for key in expired_keys:
+            del cls._hits[key]
+
+        while len(cls._hits) >= max_clients:
+            cls._hits.popitem(last=False)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -106,11 +157,23 @@ class RateLimitMiddleware:
         now = time.monotonic()
         window = settings.RATE_LIMIT_WINDOW_SECONDS
         limit = settings.RATE_LIMIT_REQUESTS
+        max_clients = settings.RATE_LIMIT_MAX_CLIENTS
         ip = self._client_ip(scope)
 
-        bucket = self._hits[ip]
-        while bucket and (now - bucket[0]) >= window:
-            bucket.popleft()
+        bucket = self._hits.get(ip)
+        if bucket is not None:
+            while bucket and (now - bucket[0]) >= window:
+                bucket.popleft()
+            if not bucket:
+                del self._hits[ip]
+                bucket = None
+
+        if bucket is None:
+            self._prune_buckets(now, window, max_clients)
+            bucket = deque()
+            self._hits[ip] = bucket
+        else:
+            self._hits.move_to_end(ip)
 
         if len(bucket) >= limit:
             retry_after = max(1, int(window - (now - bucket[0])))
@@ -220,7 +283,7 @@ class BodySizeLimitMiddleware:
 
 
 # ---------------------------------------------------------------------------
-# Pure ASGI Middleware: request-ID injection (runs around limiter middlewares)
+# Pure ASGI Middleware: request-ID injection
 # ---------------------------------------------------------------------------
 class RequestIDMiddleware:
     """Attaches a UUID to each HTTP request and echoes it in X-Request-ID."""
@@ -246,8 +309,6 @@ class RequestIDMiddleware:
         await self.app(scope, receive, send_with_request_id)
 
 
-# Registration order (last added = outermost):
-#   CORSMiddleware -> RequestIDMiddleware -> BodySizeLimitMiddleware -> RateLimitMiddleware
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(BodySizeLimitMiddleware)
 app.add_middleware(RequestIDMiddleware)
@@ -343,6 +404,7 @@ async def health() -> dict:
 @app.post(
     "/prospect-discovery",
     response_model=ProspectDiscoveryResponse,
+    response_model_exclude_none=True,
     status_code=status.HTTP_200_OK,
     tags=["Prospect Discovery"],
     summary="Discover prospects across public platforms",
@@ -350,13 +412,18 @@ async def health() -> dict:
         "Accepts a natural-language query, extracts audience/location intent via LLM, "
         "concurrently discovers public profiles across Google, LinkedIn, X, YouTube, "
         "Instagram, Facebook, Threads, WhatsApp, and Email, deduplicates cross-platform "
-        "matches, scores relevance strictly, and returns consolidated prospects plus "
-        "provider health telemetry."
+        "matches, scores relevance strictly, and returns structured prospects JSON. "
+        "Set ?include_diagnostics=true to also embed provider_health in the response body."
     ),
 )
 async def discover_prospects(
     request: ProspectQueryRequest,
     http_request: Request,
+    response: Response,
+    include_diagnostics: bool = Query(
+        default=False,
+        description="Include provider_health telemetry in the JSON response body.",
+    ),
 ) -> ProspectDiscoveryResponse:
     request_id = getattr(http_request.state, "request_id", "unknown")
     logger.info(
@@ -365,11 +432,29 @@ async def discover_prospects(
         request.query,
     )
     try:
-        result = await prospect_service.discover_prospects(request)
+        result, health = await prospect_service.discover_prospects_with_health(request)
+
+        # Always expose non-intrusive provider observability in HTTP headers
+        failed_count = (
+            health.platforms_rate_limited
+            + health.platforms_timed_out
+            + health.platforms_errored
+        )
+        response.headers["X-LLM-Provider"] = health.llm_provider
+        response.headers["X-Platforms-Succeeded"] = str(health.platforms_succeeded)
+        response.headers["X-Platforms-No-Results"] = str(health.platforms_no_results)
+        response.headers["X-Platforms-Failed"] = str(failed_count)
+
+        if include_diagnostics:
+            result.provider_health = health
+
         logger.info(
-            "Prospect discovery complete [request_id=%s] prospects=%d",
+            "Prospect discovery complete [request_id=%s] prospects=%d llm=%s ok=%d fail=%d",
             request_id,
             result.total_prospects,
+            health.llm_provider,
+            health.platforms_succeeded,
+            failed_count,
         )
         return result
     except HTTPException:

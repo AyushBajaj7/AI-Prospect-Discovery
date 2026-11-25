@@ -15,7 +15,8 @@ from typing import Set
 
 from app.platforms.contacts import extract_all_contacts
 from app.schemas import RawCandidate, SocialLink, StructuredIntent
-from app.utils.normalizers import clean_name, normalize_location
+from app.utils.normalizers import clean_name, classify_candidate_entity, normalize_location
+from app.utils.validators import format_tel_uri
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +47,20 @@ class ProfileExtractor:
         for phone in extra["phones"]:
             if phone not in candidate.phones:
                 candidate.phones.append(phone)
-                candidate.social_links.append(
-                    SocialLink(platform="Phone", link=f"tel:{phone}")
-                )
+                tel_uri = format_tel_uri(phone)
+                if tel_uri:
+                    candidate.social_links.append(
+                        SocialLink(platform="Phone", link=tel_uri)
+                    )
+
+        # Re-classify entity type after cleaning name
+        candidate.entity_type = classify_candidate_entity(
+            candidate.name,
+            candidate.platform,
+            candidate.profile_url,
+            candidate.title,
+            candidate.snippet,
+        )
 
         for wa in extra["whatsapp_links"]:
             if wa not in candidate.whatsapp_links:

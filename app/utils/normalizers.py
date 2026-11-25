@@ -4,7 +4,7 @@ Normalizers – clean raw SERP titles, normalize locations, and extract handles.
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import Literal, Optional
 from urllib.parse import urlparse
 
 # ---------------------------------------------------------------------------
@@ -196,4 +196,97 @@ def location_matches_text(loc_term: str, text: str) -> bool:
             if re.search(rf"\b{re.escape(alias)}\b", text_lower):
                 return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# Entity classification (individual vs business vs parody/gimmick account)
+# ---------------------------------------------------------------------------
+
+_PARODY_OR_GIMMICK_RE = re.compile(
+    r"(?:"
+    r"\b(?:parody|satire|memes?|fan\s*page|fan\s*club|fan\s*account|stan\s*account|"
+    r"unofficial\s+(?:fan|page|updates)|updates?\s+account|daily\s+updates)\b"
+    r"|"
+    r"\b(?:king|queen|god|lord|prince)\s+of\s+[a-z]+\b"
+    r")",
+    re.IGNORECASE,
+)
+
+_ORG_NAME_INDICATORS_RE = re.compile(
+    r"\b(?:network|association|foundation|institute|chamber|centre|center|"
+    r"enterprise|collective|agency|agencies|studios?|ventures|capital|solutions|"
+    r"services|consultancy|consulting|group|academy|university|spotlight|"
+    r"directory|outlets?|club|society|community|organization|organisation|"
+    r"ltd|llc|inc|corp|gmbh|llp|pvt|plc)\b",
+    re.IGNORECASE,
+)
+
+_ORG_URL_PATH_RE = re.compile(
+    r"(?:eventbrite\.[^/]+/o/|meetup\.com/|/company/|/organization/|/school/|/outlets)",
+    re.IGNORECASE,
+)
+
+_PERSON_ROLE_RE = re.compile(
+    r"\b(?:founder|co-founder|cofounder|ceo|cto|cfo|owner|director|manager|"
+    r"engineer|developer|designer|consultant|advisor|investor|coach|analyst|"
+    r"journalist|writer|entrepreneur)\b",
+    re.IGNORECASE,
+)
+
+
+def classify_candidate_entity(
+    name: str,
+    platform: str,
+    profile_url: str,
+    title: str = "",
+    snippet: str = "",
+) -> Literal["individual", "business", "parody_or_gimmick"]:
+    """
+    Classify a candidate prospect using combined name, URL, title, and snippet
+    evidence rather than naive single-keyword blocking.
+    """
+    n_clean = (name or "").strip()
+    url_lower = (profile_url or "").lower()
+    combined_meta = f"{n_clean} {title} {snippet}".strip()
+
+    # 1. Parody / meme / fan-page / gimmick accounts
+    if _PARODY_OR_GIMMICK_RE.search(n_clean) or _PARODY_OR_GIMMICK_RE.search(title):
+        return "parody_or_gimmick"
+    if re.search(r"\b(?:parody|satire|fan\s*account|stan\s*account|not\s+affiliated)\b", snippet, re.IGNORECASE):
+        return "parody_or_gimmick"
+    # Multi-word completely lowercase title/gimmick handle on social without human-name or role cues
+    n_words = n_clean.split()
+    if (
+        len(n_words) >= 2
+        and n_clean.islower()
+        and not _PERSON_ROLE_RE.search(f"{title} {snippet}")
+        and platform != "LinkedIn"
+    ):
+        return "parody_or_gimmick"
+
+    # 2. Organization / business / event community entities
+    if _ORG_URL_PATH_RE.search(url_lower):
+        return "business"
+
+    is_personal_linkedin = platform == "LinkedIn" and "/in/" in url_lower
+    has_org_name = bool(_ORG_NAME_INDICATORS_RE.search(n_clean))
+
+    # An org-like name (e.g. "London Founder's Network", "Activate Studio",
+    # "Centre for Fashion Enterprise") without a personal /in/ LinkedIn profile is a business/org
+    if has_org_name and not is_personal_linkedin:
+        return "business"
+
+    # Generic Google domain without personal profile markers or person-name structure
+    if platform in {"Google", "Email"} and not is_personal_linkedin:
+        has_about_me = "about.me/" in url_lower
+        looks_like_person_name = (
+            2 <= len(n_words) <= 3
+            and all(w[0].isupper() for w in n_words if w)
+            and not any(ch in n_clean for ch in ("&", ":", "|"))
+        )
+        if not has_about_me and not looks_like_person_name:
+            return "business"
+
+    return "individual"
+
 
