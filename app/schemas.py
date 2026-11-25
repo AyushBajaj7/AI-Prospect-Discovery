@@ -132,6 +132,20 @@ class Prospect(BaseModel):
     )
 
 
+class PlatformPipelineMetrics(BaseModel):
+    """Per-platform stage counts explaining exactly where hits were filtered."""
+
+    search_status: SearchStatus = SearchStatus.NO_RESULTS
+    search_hits: int = 0
+    invalid_urls: int = 0
+    rejected_names: int = 0
+    missing_required_contact: int = 0
+    parody_or_gimmick: int = 0
+    target_type_mismatches: int = 0
+    below_relevance_threshold: int = 0
+    retained_candidates: int = 0
+
+
 class ProviderHealthSummary(BaseModel):
     """Observability summary distinguishing empty results from upstream errors."""
 
@@ -142,6 +156,7 @@ class ProviderHealthSummary(BaseModel):
     platforms_timed_out: int = 0
     platforms_errored: int = 0
     platform_outcomes: Dict[str, SearchStatus] = Field(default_factory=dict)
+    platform_metrics: Dict[str, PlatformPipelineMetrics] = Field(default_factory=dict)
 
 
 class ProspectDiscoveryResponse(BaseModel):
@@ -188,5 +203,5 @@ class RawCandidate(BaseModel):
     verification_status: Literal["url_format_validated", "search_indexed_web", "unverified"] = (
         "search_indexed_web"
     )
-    entity_type: Literal["individual", "business", "parody_or_gimmick"] = "individual"
+    entity_type: Literal["individual", "business", "unknown", "parody_or_gimmick"] = "unknown"
     metadata: Dict[str, Any] = Field(default_factory=dict)

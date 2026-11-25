@@ -16,10 +16,10 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from app.config import settings
-from app.schemas import RawCandidate, StructuredIntent
+from app.schemas import PlatformPipelineMetrics, RawCandidate, StructuredIntent
 from app.utils.normalizers import location_matches_text
 
 logger = logging.getLogger(__name__)
@@ -156,23 +156,41 @@ class RelevanceService:
         self,
         candidates: List[RawCandidate],
         intent: StructuredIntent,
+        metrics_map: Optional[Dict[str, PlatformPipelineMetrics]] = None,
     ) -> List[RawCandidate]:
         relevant: List[RawCandidate] = []
         for cand in candidates:
+            m = metrics_map.get(cand.platform) if metrics_map is not None else None
+
             # Exclude explicit parody/meme/gimmick accounts
             if cand.entity_type == "parody_or_gimmick":
-                logger.debug("Filtered parody/gimmick candidate '%s'", cand.name)
+                if m is not None:
+                    m.parody_or_gimmick += 1
+                logger.info(
+                    "Platform %s rejected '%s' [reason=parody_or_gimmick]",
+                    cand.platform,
+                    cand.name,
+                )
                 continue
 
-            # Enforce intent.target_type alignment before consolidation
+            # Enforce intent.target_type for confirmed mismatches while allowing
+            # genuinely ambiguous ("unknown") candidates to be judged by relevance score.
             if intent.target_type == "individual" and cand.entity_type == "business":
-                logger.debug(
-                    "Filtered organization '%s' for individual-target query", cand.name
+                if m is not None:
+                    m.target_type_mismatches += 1
+                logger.info(
+                    "Platform %s rejected '%s' [reason=target_type_mismatch expected=individual got=business]",
+                    cand.platform,
+                    cand.name,
                 )
                 continue
             if intent.target_type == "business" and cand.entity_type == "individual":
-                logger.debug(
-                    "Filtered individual '%s' for business-target query", cand.name
+                if m is not None:
+                    m.target_type_mismatches += 1
+                logger.info(
+                    "Platform %s rejected '%s' [reason=target_type_mismatch expected=business got=individual]",
+                    cand.platform,
+                    cand.name,
                 )
                 continue
 
@@ -180,10 +198,15 @@ class RelevanceService:
             cand.relevance_score = score
             cand.metadata["score_breakdown"] = breakdown
             if score >= settings.RELEVANCE_THRESHOLD:
+                if m is not None:
+                    m.retained_candidates += 1
                 relevant.append(cand)
             else:
-                logger.debug(
-                    "Filtered '%s' (score=%.1f, threshold=%.1f)",
+                if m is not None:
+                    m.below_relevance_threshold += 1
+                logger.info(
+                    "Platform %s rejected '%s' [reason=below_relevance_threshold score=%.1f threshold=%.1f]",
+                    cand.platform,
                     cand.name,
                     score,
                     settings.RELEVANCE_THRESHOLD,

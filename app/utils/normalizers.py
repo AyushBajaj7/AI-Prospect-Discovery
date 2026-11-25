@@ -217,6 +217,10 @@ _ORG_NAME_INDICATORS_RE = re.compile(
     r"enterprise|collective|agency|agencies|studios?|ventures|capital|solutions|"
     r"services|consultancy|consulting|group|academy|university|spotlight|"
     r"directory|outlets?|club|society|community|organization|organisation|"
+    r"restaurants?|hotels?|cafes?|cafés?|bistros?|bakeries|bakery|bars?|"
+    r"lounges?|grills?|kitchens?|diners?|catering|resorts?|clinics?|salons?|"
+    r"boutiques?|shops?|stores?|company|companies|firms?|partners|hospitality|"
+    r"pizzerias?|steakhouses?|roastery|roasteries|"
     r"ltd|llc|inc|corp|gmbh|llp|pvt|plc)\b",
     re.IGNORECASE,
 )
@@ -229,7 +233,7 @@ _ORG_URL_PATH_RE = re.compile(
 _PERSON_ROLE_RE = re.compile(
     r"\b(?:founder|co-founder|cofounder|ceo|cto|cfo|owner|director|manager|"
     r"engineer|developer|designer|consultant|advisor|investor|coach|analyst|"
-    r"journalist|writer|entrepreneur)\b",
+    r"journalist|writer|entrepreneur|lover|enthusiast|fan)\b",
     re.IGNORECASE,
 )
 
@@ -240,27 +244,22 @@ def classify_candidate_entity(
     profile_url: str,
     title: str = "",
     snippet: str = "",
-) -> Literal["individual", "business", "parody_or_gimmick"]:
+) -> Literal["individual", "business", "unknown", "parody_or_gimmick"]:
     """
     Classify a candidate prospect using combined name, URL, title, and snippet
-    evidence rather than naive single-keyword blocking.
+    evidence. Returns `"unknown"` when identity signals are genuinely ambiguous
+    rather than forcing a mis-classification.
     """
     n_clean = (name or "").strip()
     url_lower = (profile_url or "").lower()
-    combined_meta = f"{n_clean} {title} {snippet}".strip()
 
-    # 1. Parody / meme / fan-page / gimmick accounts
+    # 1. Explicit parody / satire / meme / fan-page / gimmick signals
     if _PARODY_OR_GIMMICK_RE.search(n_clean) or _PARODY_OR_GIMMICK_RE.search(title):
         return "parody_or_gimmick"
-    if re.search(r"\b(?:parody|satire|fan\s*account|stan\s*account|not\s+affiliated)\b", snippet, re.IGNORECASE):
-        return "parody_or_gimmick"
-    # Multi-word completely lowercase title/gimmick handle on social without human-name or role cues
-    n_words = n_clean.split()
-    if (
-        len(n_words) >= 2
-        and n_clean.islower()
-        and not _PERSON_ROLE_RE.search(f"{title} {snippet}")
-        and platform != "LinkedIn"
+    if re.search(
+        r"\b(?:parody\s+account|satire\s+account|fan\s*account|stan\s*account|not\s+affiliated)\b",
+        snippet,
+        re.IGNORECASE,
     ):
         return "parody_or_gimmick"
 
@@ -271,22 +270,34 @@ def classify_candidate_entity(
     is_personal_linkedin = platform == "LinkedIn" and "/in/" in url_lower
     has_org_name = bool(_ORG_NAME_INDICATORS_RE.search(n_clean))
 
-    # An org-like name (e.g. "London Founder's Network", "Activate Studio",
-    # "Centre for Fashion Enterprise") without a personal /in/ LinkedIn profile is a business/org
     if has_org_name and not is_personal_linkedin:
         return "business"
 
-    # Generic Google domain without personal profile markers or person-name structure
-    if platform in {"Google", "Email"} and not is_personal_linkedin:
-        has_about_me = "about.me/" in url_lower
-        looks_like_person_name = (
-            2 <= len(n_words) <= 3
-            and all(w[0].isupper() for w in n_words if w)
-            and not any(ch in n_clean for ch in ("&", ":", "|"))
-        )
-        if not has_about_me and not looks_like_person_name:
-            return "business"
+    n_words = n_clean.split()
+    looks_like_person_name = (
+        2 <= len(n_words) <= 3
+        and all(w[0].isalpha() for w in n_words if w)
+        and not any(ch in n_clean for ch in ("&", ":", "|"))
+    )
 
-    return "individual"
+    if is_personal_linkedin:
+        return "individual"
+
+    # Google/Email custom websites without personal profile markers or person-name structure
+    if platform in {"Google", "Email"}:
+        if "about.me/" in url_lower or looks_like_person_name:
+            return "individual"
+        if len(n_words) >= 4 or any(ch in n_clean for ch in ("&", "|")):
+            return "business"
+        return "unknown"
+
+    # Social accounts: genuine lowercase person names (e.g. "john doe") are not marked parody;
+    # classify with role cues as "individual", otherwise leave "unknown" for relevance checks.
+    if looks_like_person_name and (
+        any(w[0].isupper() for w in n_words if w) or _PERSON_ROLE_RE.search(f"{title} {snippet}")
+    ):
+        return "individual"
+
+    return "unknown"
 
 

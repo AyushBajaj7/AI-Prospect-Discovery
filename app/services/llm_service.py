@@ -191,6 +191,7 @@ class LLMService:
             "last_latency_ms": 0.0,
             "prompt_tokens": 0,
             "completion_tokens": 0,
+            "thinking_tokens": 0,
             "provider_used": "none",
             "provider_attempts": [],
         }
@@ -385,6 +386,7 @@ class LLMService:
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": query},
                 ],
+                reasoning_effort="none",
                 temperature=0.0,
                 max_completion_tokens=400,
             )
@@ -410,7 +412,9 @@ class LLMService:
                         system_instruction=SYSTEM_PROMPT,
                         response_mime_type="application/json",
                         response_schema=StructuredIntent,
+                        thinking_config=types.ThinkingConfig(thinking_level="MINIMAL"),
                         temperature=0.0,
+                        max_output_tokens=400,
                     ),
                 ),
                 timeout=timeout_sec,
@@ -419,6 +423,7 @@ class LLMService:
             if usage:
                 self.stats["prompt_tokens"] += getattr(usage, "prompt_token_count", 0) or 0
                 self.stats["completion_tokens"] += getattr(usage, "candidates_token_count", 0) or 0
+                self.stats["thinking_tokens"] += getattr(usage, "thoughts_token_count", 0) or 0
             parsed = getattr(resp, "parsed", None)
             if isinstance(parsed, StructuredIntent):
                 return sanitize_structured_intent(parsed)
@@ -439,11 +444,13 @@ class LLMService:
                 max_tokens=400,
                 system=SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": query}],
+                thinking={"type": "disabled"},
                 output_config={
+                    "effort": "low",
                     "format": {
                         "type": "json_schema",
                         "schema": anthropic.transform_schema(StructuredIntent),
-                    }
+                    },
                 },
             )
             if getattr(resp, "usage", None):

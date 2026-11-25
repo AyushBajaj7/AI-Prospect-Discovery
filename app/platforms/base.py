@@ -13,9 +13,16 @@ import logging
 import re
 from abc import ABC, abstractmethod
 from typing import List, Optional, Tuple
+from urllib.parse import urlparse
 
 from app.platforms.contacts import extract_all_contacts
-from app.schemas import RawCandidate, SearchStatus, SocialLink, StructuredIntent
+from app.schemas import (
+    PlatformPipelineMetrics,
+    RawCandidate,
+    SearchStatus,
+    SocialLink,
+    StructuredIntent,
+)
 from app.services.search_service import SearchHit, SearchService, search_service
 from app.utils.normalizers import (
     LOCATION_ALIASES,
@@ -36,30 +43,32 @@ from app.utils.validators import (
 
 logger = logging.getLogger(__name__)
 
-_EXPLICIT_CITIES: Tuple[Tuple[str, str], ...] = (
-    ("washington dc", "Washington DC, USA"),
-    ("washington, d.c.", "Washington DC, USA"),
-    ("new york city", "New York, USA"),
-    ("new york", "New York, USA"),
-    ("san francisco", "San Francisco, USA"),
-    ("los angeles", "Los Angeles, USA"),
-    ("chicago", "Chicago, USA"),
-    ("toronto", "Toronto, Canada"),
-    ("london", "London, UK"),
-    ("manchester", "Manchester, UK"),
-    ("berlin", "Berlin, Germany"),
-    ("paris", "Paris, France"),
-    ("ahmedabad", "Ahmedabad, India"),
-    ("bengaluru", "Bengaluru, India"),
-    ("bangalore", "Bengaluru, India"),
-    ("mumbai", "Mumbai, India"),
-    ("delhi", "Delhi, India"),
-    ("dubai", "Dubai, UAE"),
-    ("abu dhabi", "Abu Dhabi, UAE"),
+# Unambiguous city tokens used strictly to extract city names confirmed in text;
+# country is appended ONLY when country text is also present.
+_EXPLICIT_CITY_NAMES: Tuple[Tuple[str, str], ...] = (
+    ("washington dc", "Washington DC"),
+    ("washington, d.c.", "Washington DC"),
+    ("new york city", "New York"),
+    ("new york", "New York"),
+    ("san francisco", "San Francisco"),
+    ("los angeles", "Los Angeles"),
+    ("chicago", "Chicago"),
+    ("toronto", "Toronto"),
+    ("london", "London"),
+    ("manchester", "Manchester"),
+    ("berlin", "Berlin"),
+    ("paris", "Paris"),
+    ("ahmedabad", "Ahmedabad"),
+    ("bengaluru", "Bengaluru"),
+    ("bangalore", "Bengaluru"),
+    ("mumbai", "Mumbai"),
+    ("delhi", "Delhi"),
+    ("dubai", "Dubai"),
+    ("abu dhabi", "Abu Dhabi"),
     ("singapore", "Singapore"),
-    ("sydney", "Sydney, Australia"),
-    ("melbourne", "Melbourne, Australia"),
-    ("tokyo", "Tokyo, Japan"),
+    ("sydney", "Sydney"),
+    ("melbourne", "Melbourne"),
+    ("tokyo", "Tokyo"),
 )
 
 
@@ -111,8 +120,6 @@ class BasePlatformAdapter(ABC):
         remaining compatible with tests that monkeypatch `search_service.search`.
         """
         try:
-            # Check underlying __func__ rather than __dict__ so pytest monkeypatch
-            # restoration of the bound method doesn't shadow search_with_status.
             if getattr(search_service.search, "__func__", None) is not SearchService.search:
                 hits = await search_service.search(query, num_results=max_results)
                 status = SearchStatus.SUCCESS if hits else SearchStatus.NO_RESULTS
@@ -129,57 +136,57 @@ class BasePlatformAdapter(ABC):
             return [], SearchStatus.PROVIDER_ERROR
 
     @staticmethod
-    def _record_outcome(platform_name: str, status: SearchStatus) -> None:
+    def _record_metrics(platform_name: str, metrics: PlatformPipelineMetrics) -> None:
         from app.services.prospect_service import prospect_service
 
-        prospect_service.record_platform_outcome(platform_name, status)
+        prospect_service.record_platform_metrics(platform_name, metrics)
 
     def _infer_location(self, text: str, intent: StructuredIntent) -> Optional[str]:
         """
-        Extract an evidence-backed location string strictly from `text`.
-        Returns None if the snippet/title contains no geographical evidence.
+        Strictly evidence-only location extractor: includes city, state, and
+        country ONLY when each component itself is confirmed in `text`.
         """
         text_lower = (text or "").lower()
         if not text_lower:
             return None
 
-        city_hit = bool(
-            intent.location.city and location_matches_text(intent.location.city, text_lower)
-        )
-        country_hit = bool(
-            intent.location.country and location_matches_text(intent.location.country, text_lower)
-        )
+        matched_city: Optional[str] = None
+        matched_state: Optional[str] = None
+        matched_country: Optional[str] = None
 
-        if city_hit:
-            parts = [intent.location.city]
-            if intent.location.state and location_matches_text(intent.location.state, text_lower):
-                parts.append(intent.location.state)
-            if intent.location.country:
-                parts.append(intent.location.country)
-            return normalize_location(", ".join(p for p in parts if p))
+        if intent.location.city and location_matches_text(intent.location.city, text_lower):
+            matched_city = intent.location.city
+        else:
+            for city_token, city_label in _EXPLICIT_CITY_NAMES:
+                if re.search(rf"\b{re.escape(city_token)}\b", text_lower):
+                    matched_city = city_label
+                    break
 
-        for city_token, formatted_loc in _EXPLICIT_CITIES:
-            if re.search(rf"\b{re.escape(city_token)}\b", text_lower):
-                return normalize_location(formatted_loc)
+        if intent.location.state and location_matches_text(intent.location.state, text_lower):
+            matched_state = intent.location.state
 
-        if country_hit and intent.location.country:
-            return normalize_location(intent.location.country)
+        if intent.location.country and location_matches_text(intent.location.country, text_lower):
+            matched_country = intent.location.country
+        else:
+            for canonical, aliases in (
+                ("UK", LOCATION_ALIASES["uk"]),
+                ("USA", LOCATION_ALIASES["usa"]),
+                ("UAE", LOCATION_ALIASES["uae"]),
+            ):
+                for alias in aliases:
+                    pattern = (
+                        rf"(?<!\w){re.escape(alias)}(?!\w)"
+                        if len(alias) <= 4
+                        else rf"\b{re.escape(alias)}\b"
+                    )
+                    if re.search(pattern, text_lower):
+                        matched_country = canonical
+                        break
+                if matched_country:
+                    break
 
-        for canonical, aliases in (
-            ("UK", LOCATION_ALIASES["uk"]),
-            ("USA", LOCATION_ALIASES["usa"]),
-            ("UAE", LOCATION_ALIASES["uae"]),
-        ):
-            for alias in aliases:
-                pattern = (
-                    rf"(?<!\w){re.escape(alias)}(?!\w)"
-                    if len(alias) <= 4
-                    else rf"\b{re.escape(alias)}\b"
-                )
-                if re.search(pattern, text_lower):
-                    return canonical
-
-        return None
+        parts = [p for p in (matched_city, matched_state, matched_country) if p]
+        return normalize_location(", ".join(parts)) if parts else None
 
     def validate_url(self, url: str) -> bool:
         return is_valid_profile_url(self.platform_name, url)
@@ -193,7 +200,10 @@ class BasePlatformAdapter(ABC):
     ) -> List[RawCandidate]:
         query = self.build_query(intent)
         hits, search_status = await self._execute_search(query, max_results)
-        self._record_outcome(self.platform_name, search_status)
+        metrics = PlatformPipelineMetrics(
+            search_status=search_status,
+            search_hits=len(hits),
+        )
 
         candidates: List[RawCandidate] = []
         is_verified_social = self.platform_name in PLATFORM_PATTERNS
@@ -205,15 +215,28 @@ class BasePlatformAdapter(ABC):
 
             profile_url = clean_url(raw_url)
             if not self.validate_url(profile_url):
+                metrics.invalid_urls += 1
+                logger.info(
+                    "Platform %s rejected hit [reason=invalid_url] url=%r",
+                    self.platform_name,
+                    raw_url[:120],
+                )
                 continue
 
             name = clean_name(title, self.platform_name)
             if not name:
+                metrics.rejected_names += 1
+                logger.info(
+                    "Platform %s rejected hit [reason=rejected_name] title=%r",
+                    self.platform_name,
+                    title[:120],
+                )
                 continue
 
             combined_text = f"{title} {snippet}"
             location = self._infer_location(combined_text, intent)
             contacts = extract_all_contacts(combined_text)
+            phone_ctx = (urlparse(profile_url).hostname or "").lower() or None
 
             social_links: List[SocialLink] = [
                 SocialLink(platform=self.platform_name, link=profile_url)
@@ -221,7 +244,7 @@ class BasePlatformAdapter(ABC):
             for email in contacts["emails"]:
                 social_links.append(SocialLink(platform="Email", link=f"mailto:{email}"))
             for phone in contacts["phones"]:
-                tel_uri = format_tel_uri(phone)
+                tel_uri = format_tel_uri(phone, phone_context=phone_ctx)
                 if tel_uri:
                     social_links.append(SocialLink(platform="Phone", link=tel_uri))
             for wa in contacts["whatsapp_links"]:
@@ -254,4 +277,5 @@ class BasePlatformAdapter(ABC):
                 )
             )
 
+        self._record_metrics(self.platform_name, metrics)
         return candidates

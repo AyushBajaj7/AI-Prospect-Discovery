@@ -6,13 +6,16 @@ prospects and normalizes links to official digit-only `https://wa.me/<digits>`.
 """
 from __future__ import annotations
 
+import logging
 from typing import List
 
 from app.platforms.base import BasePlatformAdapter
 from app.platforms.contacts import extract_all_contacts
-from app.schemas import RawCandidate, SocialLink, StructuredIntent
+from app.schemas import PlatformPipelineMetrics, RawCandidate, SocialLink, StructuredIntent
 from app.utils.normalizers import clean_name, classify_candidate_entity
 from app.utils.validators import format_tel_uri, is_valid_profile_url, normalize_whatsapp_url
+
+logger = logging.getLogger(__name__)
 
 
 class WhatsAppAdapter(BasePlatformAdapter):
@@ -32,7 +35,10 @@ class WhatsAppAdapter(BasePlatformAdapter):
     ) -> List[RawCandidate]:
         query = self.build_query(intent)
         hits, search_status = await self._execute_search(query, max_results)
-        self._record_outcome(self.platform_name, search_status)
+        metrics = PlatformPipelineMetrics(
+            search_status=search_status,
+            search_hits=len(hits),
+        )
 
         candidates: List[RawCandidate] = []
 
@@ -50,10 +56,20 @@ class WhatsAppAdapter(BasePlatformAdapter):
                 wa_links.append(page_wa)
 
             if not wa_links:
+                metrics.missing_required_contact += 1
+                logger.info(
+                    "Platform WhatsApp rejected hit [reason=missing_whatsapp_link] url=%r",
+                    page_url[:120],
+                )
                 continue
 
             name = clean_name(title, self.platform_name)
             if not name:
+                metrics.rejected_names += 1
+                logger.info(
+                    "Platform WhatsApp rejected hit [reason=rejected_name] title=%r",
+                    title[:120],
+                )
                 continue
 
             location = self._infer_location(combined, intent)
@@ -63,7 +79,7 @@ class WhatsAppAdapter(BasePlatformAdapter):
             for email in contacts["emails"]:
                 social_links.append(SocialLink(platform="Email", link=f"mailto:{email}"))
             for phone in contacts["phones"]:
-                tel_uri = format_tel_uri(phone)
+                tel_uri = format_tel_uri(phone, phone_context="wa.me")
                 if tel_uri:
                     social_links.append(SocialLink(platform="Phone", link=tel_uri))
 
@@ -86,4 +102,5 @@ class WhatsAppAdapter(BasePlatformAdapter):
                 )
             )
 
+        self._record_metrics(self.platform_name, metrics)
         return candidates

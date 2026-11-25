@@ -286,17 +286,25 @@ def clean_url(url: str) -> str:
         return url
 
 
-def format_tel_uri(phone: str) -> str:
+def format_tel_uri(phone: str, phone_context: Optional[str] = None) -> str:
     """
-    Format a validated phone string as an RFC 3966-compliant `tel:` URI
-    without spaces or visual separator characters (e.g. `tel:+442079460991`).
+    Format a validated phone string as an RFC 3966-compliant `tel:` URI:
+      * Global numbers starting with `+`: `tel:+<digits>` (no spaces/separators).
+      * Local numbers without `+`: require a `phone-context` descriptor per
+        RFC 3966 Section 5.1.5 (`tel:<digits>;phone-context=<domain>`). Never
+        fabricates a country code; returns "" if no `phone_context` is known.
     """
     stripped = (phone or "").strip()
     has_plus = stripped.startswith("+")
     digits = re.sub(r"\D", "", stripped)
     if not digits:
         return ""
-    return f"tel:+{digits}" if has_plus else f"tel:{digits}"
+    if has_plus:
+        return f"tel:+{digits}"
+    ctx = (phone_context or "").strip().lower()
+    if ctx:
+        return f"tel:{digits};phone-context={ctx}"
+    return ""
 
 
 def is_valid_profile_url(platform: str, url: str) -> bool:

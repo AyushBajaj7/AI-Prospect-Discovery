@@ -1,0 +1,1075 @@
+[
+  {
+    "query": "Football lovers in Washington DC in USA",
+    "http_status": 200,
+    "telemetry_headers": {
+      "x-llm-provider": "heuristic_fallback",
+      "x-platforms-succeeded": "7",
+      "x-platforms-no-results": "0",
+      "x-platforms-failed": "2",
+      "x-ratelimit-limit": "30",
+      "x-ratelimit-remaining": "29",
+      "x-request-id": "0f5c20cd-2c66-4602-93e3-650fabc79a0e"
+    },
+    "strict_response": {
+      "success": true,
+      "query": "Football lovers in Washington DC in USA",
+      "total_prospects": 8,
+      "prospects": [
+        {
+          "name": "Dan Sreebny",
+          "location": "Washington DC, District of Columbia",
+          "social_link": [
+            {
+              "platform": "LinkedIn",
+              "link": "https://www.linkedin.com/in/dan-sreebny-06b57718"
+            }
+          ]
+        },
+        {
+          "name": "Basil Mokhallalati",
+          "location": "Washington DC, District of Columbia",
+          "social_link": [
+            {
+              "platform": "LinkedIn",
+              "link": "https://www.linkedin.com/in/basilmo"
+            }
+          ]
+        },
+        {
+          "name": "Katie Green",
+          "location": "Washington DC, District of Columbia",
+          "social_link": [
+            {
+              "platform": "LinkedIn",
+              "link": "https://www.linkedin.com/in/katie-green-3b345119"
+            }
+          ]
+        },
+        {
+          "name": "A. B. Dharmadhikari",
+          "social_link": [
+            {
+              "platform": "X",
+              "link": "https://x.com/ABDharmadhikari"
+            }
+          ]
+        },
+        {
+          "name": "Dayo",
+          "social_link": [
+            {
+              "platform": "X",
+              "link": "https://x.com/Temidayo598"
+            }
+          ]
+        },
+        {
+          "name": "MsFelicia @Ms_Felicia_",
+          "location": "Washington DC, District of Columbia",
+          "social_link": [
+            {
+              "platform": "Google",
+              "link": "https://twstalker.com/Ms_Felicia_"
+            }
+          ]
+        },
+        {
+          "name": "Alejandro Heredia",
+          "social_link": [
+            {
+              "platform": "LinkedIn",
+              "link": "https://www.linkedin.com/in/alejandro-herediasa"
+            }
+          ]
+        },
+        {
+          "name": "Dc Gridiron",
+          "social_link": [
+            {
+              "platform": "YouTube",
+              "link": "https://www.youtube.com/@dcgridiron"
+            }
+          ]
+        }
+      ]
+    },
+    "provider_health": {
+      "llm_provider": "heuristic_fallback",
+      "platforms_succeeded": 8,
+      "platforms_no_results": 0,
+      "platforms_rate_limited": 0,
+      "platforms_timed_out": 0,
+      "platforms_errored": 1,
+      "platform_outcomes": {
+        "LinkedIn": "SUCCESS",
+        "X": "SUCCESS",
+        "YouTube": "SUCCESS",
+        "Instagram": "SUCCESS",
+        "Facebook": "SUCCESS",
+        "Email": "SUCCESS",
+        "Google": "SUCCESS",
+        "WhatsApp": "SUCCESS",
+        "Threads": "PROVIDER_ERROR"
+      },
+      "platform_metrics": {
+        "LinkedIn": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 1,
+          "retained_candidates": 4
+        },
+        "X": {
+          "search_status": "SUCCESS",
+          "search_hits": 2,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 2
+        },
+        "YouTube": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 4,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 1
+        },
+        "Instagram": {
+          "search_status": "SUCCESS",
+          "search_hits": 1,
+          "invalid_urls": 1,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0
+        },
+        "Facebook": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 5,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0
+        },
+        "Email": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 5,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0
+        },
+        "Google": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 1,
+          "rejected_names": 1,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 2,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 1
+        },
+        "WhatsApp": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 5,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0
+        },
+        "Threads": {
+          "search_status": "PROVIDER_ERROR",
+          "search_hits": 0,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0
+        }
+      }
+    }
+  },
+  {
+    "query": "Digital marketing agency owners in New York USA",
+    "http_status": 200,
+    "telemetry_headers": {
+      "x-llm-provider": "heuristic_fallback",
+      "x-platforms-succeeded": "9",
+      "x-platforms-no-results": "0",
+      "x-platforms-failed": "0",
+      "x-ratelimit-limit": "30",
+      "x-ratelimit-remaining": "29",
+      "x-request-id": "8bd3547a-177c-461e-aaa8-bee5e4d64e1f"
+    },
+    "strict_response": {
+      "success": true,
+      "query": "Digital marketing agency owners in New York USA",
+      "total_prospects": 11,
+      "prospects": [
+        {
+          "name": "Steven Rank",
+          "location": "New York, New York, USA",
+          "social_link": [
+            {
+              "platform": "LinkedIn",
+              "link": "https://www.linkedin.com/in/steven-rank-038b242"
+            }
+          ]
+        },
+        {
+          "name": "Bill Decker",
+          "location": "New York, New York, USA",
+          "social_link": [
+            {
+              "platform": "LinkedIn",
+              "link": "https://www.linkedin.com/in/billdecker"
+            }
+          ]
+        },
+        {
+          "name": "Erfan Azimi",
+          "location": "New York, New York",
+          "social_link": [
+            {
+              "platform": "LinkedIn",
+              "link": "https://www.linkedin.com/in/erfanazimi"
+            }
+          ]
+        },
+        {
+          "name": "Seb Weller",
+          "location": "New York, New York",
+          "social_link": [
+            {
+              "platform": "LinkedIn",
+              "link": "https://www.linkedin.com/in/sebweller"
+            }
+          ]
+        },
+        {
+          "name": "Main Street ROI",
+          "location": "New York, New York",
+          "social_link": [
+            {
+              "platform": "Facebook",
+              "link": "https://www.facebook.com/MainStreetROI"
+            }
+          ]
+        },
+        {
+          "name": "WebSenor",
+          "location": "New York, New York",
+          "social_link": [
+            {
+              "platform": "Facebook",
+              "link": "https://www.facebook.com/websenor"
+            }
+          ]
+        },
+        {
+          "name": "Neil Patel",
+          "location": "New York, New York",
+          "social_link": [
+            {
+              "platform": "X",
+              "link": "https://x.com/neilpatel"
+            }
+          ]
+        },
+        {
+          "name": "Samuel Dray",
+          "social_link": [
+            {
+              "platform": "X",
+              "link": "https://x.com/samdray_agency"
+            }
+          ]
+        },
+        {
+          "name": "Robin Theakston",
+          "social_link": [
+            {
+              "platform": "X",
+              "link": "https://x.com/smallbizdigital"
+            }
+          ]
+        },
+        {
+          "name": "Winston Digital Marketing",
+          "social_link": [
+            {
+              "platform": "Google",
+              "link": "https://www.winstondigitalmarketing.com"
+            }
+          ]
+        },
+        {
+          "name": "Michael Santos",
+          "social_link": [
+            {
+              "platform": "X",
+              "link": "https://x.com/michaelsantos"
+            }
+          ]
+        }
+      ]
+    },
+    "provider_health": {
+      "llm_provider": "heuristic_fallback",
+      "platforms_succeeded": 9,
+      "platforms_no_results": 0,
+      "platforms_rate_limited": 0,
+      "platforms_timed_out": 0,
+      "platforms_errored": 0,
+      "platform_outcomes": {
+        "LinkedIn": "SUCCESS",
+        "X": "SUCCESS",
+        "YouTube": "SUCCESS",
+        "Instagram": "SUCCESS",
+        "Facebook": "SUCCESS",
+        "Threads": "SUCCESS",
+        "WhatsApp": "SUCCESS",
+        "Email": "SUCCESS",
+        "Google": "SUCCESS"
+      },
+      "platform_metrics": {
+        "LinkedIn": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 1,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 4
+        },
+        "X": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 1,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 4
+        },
+        "YouTube": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 5,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0
+        },
+        "Instagram": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 5,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0
+        },
+        "Facebook": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 3,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 2
+        },
+        "Threads": {
+          "search_status": "SUCCESS",
+          "search_hits": 1,
+          "invalid_urls": 1,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0
+        },
+        "WhatsApp": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 5,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0
+        },
+        "Email": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 5,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0
+        },
+        "Google": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 1,
+          "rejected_names": 1,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 2,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 1
+        }
+      }
+    }
+  },
+  {
+    "query": "Startup founders in London UK",
+    "http_status": 200,
+    "telemetry_headers": {
+      "x-llm-provider": "heuristic_fallback",
+      "x-platforms-succeeded": "7",
+      "x-platforms-no-results": "0",
+      "x-platforms-failed": "2",
+      "x-ratelimit-limit": "30",
+      "x-ratelimit-remaining": "29",
+      "x-request-id": "6eda3645-28b5-4e1b-9b0a-187a07d962cd"
+    },
+    "strict_response": {
+      "success": true,
+      "query": "Startup founders in London UK",
+      "total_prospects": 10,
+      "prospects": [
+        {
+          "name": "Charlie Walker",
+          "location": "London, UK",
+          "social_link": [
+            {
+              "platform": "LinkedIn",
+              "link": "https://www.linkedin.com/in/charlie-walker-846184112"
+            },
+            {
+              "platform": "Email",
+              "link": "mailto:cofounder@rephrase.ai"
+            }
+          ]
+        },
+        {
+          "name": "Rahim Nathwani",
+          "location": "London, UK",
+          "social_link": [
+            {
+              "platform": "LinkedIn",
+              "link": "https://www.linkedin.com/in/rahimnathwani"
+            },
+            {
+              "platform": "Email",
+              "link": "mailto:cofounder@rephrase.ai"
+            }
+          ]
+        },
+        {
+          "name": "Peter Elstrom",
+          "location": "London, UK",
+          "social_link": [
+            {
+              "platform": "LinkedIn",
+              "link": "https://www.linkedin.com/in/peter-elstrom-a4a6483"
+            },
+            {
+              "platform": "Email",
+              "link": "mailto:cofounder@rephrase.ai"
+            }
+          ]
+        },
+        {
+          "name": "Shivam Mangla",
+          "location": "London",
+          "social_link": [
+            {
+              "platform": "LinkedIn",
+              "link": "https://www.linkedin.com/in/shivammangla"
+            },
+            {
+              "platform": "Email",
+              "link": "mailto:cofounder@rephrase.ai"
+            }
+          ]
+        },
+        {
+          "name": "Grow London Local",
+          "location": "London, UK",
+          "social_link": [
+            {
+              "platform": "Facebook",
+              "link": "https://www.facebook.com/GrowLondonLocal"
+            }
+          ]
+        },
+        {
+          "name": "Filebite",
+          "location": "London, UK",
+          "social_link": [
+            {
+              "platform": "Facebook",
+              "link": "https://www.facebook.com/Filebite"
+            }
+          ]
+        },
+        {
+          "name": "Henning Sanden",
+          "social_link": [
+            {
+              "platform": "X",
+              "link": "https://x.com/henningsanden"
+            }
+          ]
+        },
+        {
+          "name": "Miguel Carranza",
+          "social_link": [
+            {
+              "platform": "X",
+              "link": "https://x.com/elwatto"
+            }
+          ]
+        },
+        {
+          "name": "harshad",
+          "social_link": [
+            {
+              "platform": "X",
+              "link": "https://x.com/harzhad"
+            }
+          ]
+        },
+        {
+          "name": "Startups of London",
+          "location": "London",
+          "social_link": [
+            {
+              "platform": "YouTube",
+              "link": "https://www.youtube.com/c/startupsoflondon"
+            }
+          ]
+        }
+      ]
+    },
+    "provider_health": {
+      "llm_provider": "heuristic_fallback",
+      "platforms_succeeded": 8,
+      "platforms_no_results": 0,
+      "platforms_rate_limited": 0,
+      "platforms_timed_out": 0,
+      "platforms_errored": 1,
+      "platform_outcomes": {
+        "LinkedIn": "SUCCESS",
+        "X": "SUCCESS",
+        "YouTube": "SUCCESS",
+        "Instagram": "SUCCESS",
+        "Facebook": "SUCCESS",
+        "WhatsApp": "SUCCESS",
+        "Email": "SUCCESS",
+        "Google": "SUCCESS",
+        "Threads": "PROVIDER_ERROR"
+      },
+      "platform_metrics": {
+        "LinkedIn": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 1,
+          "retained_candidates": 4
+        },
+        "X": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 1,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 1,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 3
+        },
+        "YouTube": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 4,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 1
+        },
+        "Instagram": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 5,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0
+        },
+        "Facebook": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 1,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 2,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 2
+        },
+        "WhatsApp": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 5,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0
+        },
+        "Email": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 5,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0
+        },
+        "Google": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 2,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 3,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0
+        },
+        "Threads": {
+          "search_status": "PROVIDER_ERROR",
+          "search_hits": 0,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0
+        }
+      }
+    }
+  },
+  {
+    "query": "Cricket lovers in Ahmedabad India",
+    "http_status": 200,
+    "telemetry_headers": {
+      "x-llm-provider": "heuristic_fallback",
+      "x-platforms-succeeded": "5",
+      "x-platforms-no-results": "0",
+      "x-platforms-failed": "4",
+      "x-ratelimit-limit": "30",
+      "x-ratelimit-remaining": "29",
+      "x-request-id": "e78b695f-df51-4966-9131-2f15f0162579"
+    },
+    "strict_response": {
+      "success": true,
+      "query": "Cricket lovers in Ahmedabad India",
+      "total_prospects": 5,
+      "prospects": [
+        {
+          "name": "Abhishek Raj",
+          "location": "Ahmedabad, Gujarat, India",
+          "social_link": [
+            {
+              "platform": "LinkedIn",
+              "link": "https://www.linkedin.com/in/abhishek-raj-ab978895"
+            }
+          ]
+        },
+        {
+          "name": "Sanandan (Sandy) Sudhir",
+          "location": "Ahmedabad, Gujarat, India",
+          "social_link": [
+            {
+              "platform": "LinkedIn",
+              "link": "https://www.linkedin.com/in/sanandan-sandy-sudhir"
+            }
+          ]
+        },
+        {
+          "name": "Jigar Jokhakar",
+          "location": "Ahmedabad",
+          "social_link": [
+            {
+              "platform": "LinkedIn",
+              "link": "https://www.linkedin.com/in/jigarjokhakar"
+            }
+          ]
+        },
+        {
+          "name": "Dhruvesh Patel",
+          "location": "Ahmedabad",
+          "social_link": [
+            {
+              "platform": "LinkedIn",
+              "link": "https://www.linkedin.com/in/dhruvesh-patel-210794"
+            }
+          ]
+        },
+        {
+          "name": "Syed Shaheen Jamil",
+          "location": "Ahmedabad",
+          "social_link": [
+            {
+              "platform": "LinkedIn",
+              "link": "https://www.linkedin.com/in/shaheenjamil"
+            }
+          ]
+        }
+      ]
+    },
+    "provider_health": {
+      "llm_provider": "heuristic_fallback",
+      "platforms_succeeded": 8,
+      "platforms_no_results": 0,
+      "platforms_rate_limited": 0,
+      "platforms_timed_out": 0,
+      "platforms_errored": 1,
+      "platform_outcomes": {
+        "LinkedIn": "SUCCESS",
+        "YouTube": "SUCCESS",
+        "Instagram": "SUCCESS",
+        "WhatsApp": "SUCCESS",
+        "Email": "SUCCESS",
+        "Facebook": "SUCCESS",
+        "X": "SUCCESS",
+        "Google": "SUCCESS",
+        "Threads": "PROVIDER_ERROR"
+      },
+      "platform_metrics": {
+        "LinkedIn": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 5
+        },
+        "YouTube": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 5,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0
+        },
+        "Instagram": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 5,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0
+        },
+        "WhatsApp": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 5,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0
+        },
+        "Email": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 1,
+          "rejected_names": 0,
+          "missing_required_contact": 4,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0
+        },
+        "Facebook": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 5,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0
+        },
+        "X": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 2,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 1,
+          "retained_candidates": 2
+        },
+        "Google": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 1,
+          "rejected_names": 2,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 1,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 1
+        },
+        "Threads": {
+          "search_status": "PROVIDER_ERROR",
+          "search_hits": 0,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0
+        }
+      }
+    }
+  },
+  {
+    "query": "Restaurant owners in Dubai UAE",
+    "http_status": 200,
+    "telemetry_headers": {
+      "x-llm-provider": "heuristic_fallback",
+      "x-platforms-succeeded": "5",
+      "x-platforms-no-results": "0",
+      "x-platforms-failed": "4",
+      "x-ratelimit-limit": "30",
+      "x-ratelimit-remaining": "29",
+      "x-request-id": "6c304fc5-da9b-4738-8f51-4d0e015aa5a4"
+    },
+    "strict_response": {
+      "success": true,
+      "query": "Restaurant owners in Dubai UAE",
+      "total_prospects": 3,
+      "prospects": [
+        {
+          "name": "Mr Chef Subra",
+          "location": "Dubai",
+          "social_link": [
+            {
+              "platform": "Facebook",
+              "link": "https://www.facebook.com/mrchefsubra.uae"
+            }
+          ]
+        },
+        {
+          "name": "Raph",
+          "social_link": [
+            {
+              "platform": "X",
+              "link": "https://x.com/raph_thoug"
+            }
+          ]
+        },
+        {
+          "name": "AJ",
+          "social_link": [
+            {
+              "platform": "X",
+              "link": "https://x.com/TheSerbianG"
+            }
+          ]
+        }
+      ]
+    },
+    "provider_health": {
+      "llm_provider": "heuristic_fallback",
+      "platforms_succeeded": 6,
+      "platforms_no_results": 0,
+      "platforms_rate_limited": 0,
+      "platforms_timed_out": 0,
+      "platforms_errored": 3,
+      "platform_outcomes": {
+        "X": "SUCCESS",
+        "Facebook": "SUCCESS",
+        "WhatsApp": "SUCCESS",
+        "Email": "SUCCESS",
+        "Google": "SUCCESS",
+        "Instagram": "SUCCESS",
+        "YouTube": "PROVIDER_ERROR",
+        "Threads": "PROVIDER_ERROR",
+        "LinkedIn": "PROVIDER_ERROR"
+      },
+      "platform_metrics": {
+        "X": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 3,
+          "retained_candidates": 2
+        },
+        "Facebook": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 4,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 1
+        },
+        "WhatsApp": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 5,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0
+        },
+        "Email": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 5,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0
+        },
+        "Google": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 1,
+          "rejected_names": 1,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 3,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0
+        },
+        "Instagram": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 5,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0
+        },
+        "YouTube": {
+          "search_status": "PROVIDER_ERROR",
+          "search_hits": 0,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0
+        },
+        "Threads": {
+          "search_status": "PROVIDER_ERROR",
+          "search_hits": 0,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0
+        },
+        "LinkedIn": {
+          "search_status": "PROVIDER_ERROR",
+          "search_hits": 0,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0
+        }
+      }
+    }
+  }
+]

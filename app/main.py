@@ -318,6 +318,16 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "Accept", "X-Request-ID"],
+    expose_headers=[
+        "X-Request-ID",
+        "X-LLM-Provider",
+        "X-Platforms-Succeeded",
+        "X-Platforms-No-Results",
+        "X-Platforms-Failed",
+        "X-RateLimit-Limit",
+        "X-RateLimit-Remaining",
+        "Retry-After",
+    ],
 )
 
 

@@ -1,17 +1,19 @@
 """
 Profile extractor / enricher.
 
-After the base adapter produces a RawCandidate, this service runs a second
-pass to:
-  - Re-clean the candidate name (in case the adapter missed a trailing suffix).
-  - Normalise the location string.
-  - Re-scan title + snippet for contact details that may have been missed.
-  - De-duplicate social links within a single candidate.
+Runs a second extraction and entity-classification pass after initial adapter
+discovery:
+  - Re-cleans candidate names
+  - Normalises location strings
+  - Re-scans title + snippet for emails, RFC 3966 tel: URIs, & WhatsApp links
+  - Classifies entity_type (individual / business / unknown / parody_or_gimmick)
+  - De-duplicates social links within a single candidate
 """
 from __future__ import annotations
 
 import logging
 from typing import Set
+from urllib.parse import urlparse
 
 from app.platforms.contacts import extract_all_contacts
 from app.schemas import RawCandidate, SocialLink, StructuredIntent
@@ -26,15 +28,13 @@ class ProfileExtractor:
     def enrich_candidate(
         self, candidate: RawCandidate, intent: StructuredIntent
     ) -> RawCandidate:
-        # 1. Re-clean name
         better_name = clean_name(candidate.name, candidate.platform)
         if better_name:
             candidate.name = better_name
 
-        # 2. Normalise location
         candidate.location = normalize_location(candidate.location)
+        phone_ctx = (urlparse(candidate.profile_url).hostname or "").lower() or None
 
-        # 3. Re-scan for contacts in title + snippet
         extra = extract_all_contacts(f"{candidate.title} {candidate.snippet}")
 
         for email in extra["emails"]:
@@ -47,13 +47,12 @@ class ProfileExtractor:
         for phone in extra["phones"]:
             if phone not in candidate.phones:
                 candidate.phones.append(phone)
-                tel_uri = format_tel_uri(phone)
+                tel_uri = format_tel_uri(phone, phone_context=phone_ctx)
                 if tel_uri:
                     candidate.social_links.append(
                         SocialLink(platform="Phone", link=tel_uri)
                     )
 
-        # Re-classify entity type after cleaning name
         candidate.entity_type = classify_candidate_entity(
             candidate.name,
             candidate.platform,
@@ -69,7 +68,6 @@ class ProfileExtractor:
                     SocialLink(platform="WhatsApp", link=wa)
                 )
 
-        # 4. De-duplicate social links within this single candidate
         seen: Set[str] = set()
         unique_links = []
         for sl in candidate.social_links:

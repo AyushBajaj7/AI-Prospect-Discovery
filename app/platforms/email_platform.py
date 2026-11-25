@@ -6,14 +6,17 @@ web pages / bios matching the target audience without fabrication.
 """
 from __future__ import annotations
 
+import logging
 from typing import List, Optional
 from urllib.parse import urlparse
 
 from app.platforms.base import BasePlatformAdapter
 from app.platforms.contacts import extract_all_contacts
-from app.schemas import RawCandidate, SocialLink, StructuredIntent
+from app.schemas import PlatformPipelineMetrics, RawCandidate, SocialLink, StructuredIntent
 from app.utils.normalizers import clean_name, classify_candidate_entity, extract_handle
 from app.utils.validators import clean_url, format_tel_uri, is_valid_profile_url, normalize_whatsapp_url
+
+logger = logging.getLogger(__name__)
 
 
 def _classify_source_platform(url: str) -> Optional[str]:
@@ -53,7 +56,10 @@ class EmailAdapter(BasePlatformAdapter):
     ) -> List[RawCandidate]:
         query = self.build_query(intent)
         hits, search_status = await self._execute_search(query, max_results)
-        self._record_outcome(self.platform_name, search_status)
+        metrics = PlatformPipelineMetrics(
+            search_status=search_status,
+            search_hits=len(hits),
+        )
 
         candidates: List[RawCandidate] = []
 
@@ -64,26 +70,42 @@ class EmailAdapter(BasePlatformAdapter):
 
             source_platform = _classify_source_platform(page_url)
             if not source_platform:
+                metrics.invalid_urls += 1
+                logger.info(
+                    "Platform Email rejected hit [reason=invalid_source_url] url=%r",
+                    page_url[:120],
+                )
                 continue
 
             combined = f"{title} {snippet}"
             contacts = extract_all_contacts(combined)
             emails = contacts["emails"]
             if not emails:
+                metrics.missing_required_contact += 1
+                logger.info(
+                    "Platform Email rejected hit [reason=missing_public_email] url=%r",
+                    page_url[:120],
+                )
                 continue
 
             name = clean_name(title, source_platform)
             if not name:
+                metrics.rejected_names += 1
+                logger.info(
+                    "Platform Email rejected hit [reason=rejected_name] title=%r",
+                    title[:120],
+                )
                 continue
 
             location = self._infer_location(combined, intent)
+            phone_ctx = (urlparse(page_url).hostname or "").lower() or None
             social_links: List[SocialLink] = [
                 SocialLink(platform=source_platform, link=page_url),
             ]
             for email in emails:
                 social_links.append(SocialLink(platform="Email", link=f"mailto:{email}"))
             for phone in contacts["phones"]:
-                tel_uri = format_tel_uri(phone)
+                tel_uri = format_tel_uri(phone, phone_context=phone_ctx)
                 if tel_uri:
                     social_links.append(SocialLink(platform="Phone", link=tel_uri))
             for wa in contacts["whatsapp_links"]:
@@ -115,4 +137,5 @@ class EmailAdapter(BasePlatformAdapter):
                 )
             )
 
+        self._record_metrics(self.platform_name, metrics)
         return candidates

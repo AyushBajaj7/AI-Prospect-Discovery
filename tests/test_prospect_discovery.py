@@ -1499,5 +1499,251 @@ class TestP0ThroughP3Remediation:
         assert outcome.status == SearchStatus.RATE_LIMITED
 
 
+class TestAuditRemediationAndObservability:
+    """Tests covering LLM reasoning/thinking controls, funnel telemetry,
+    location grounding, entity classification, RFC 3966 tel URIs, and CORS."""
+
+    def test_llm_providers_configure_reasoning_and_thinking_controls(self, monkeypatch):
+        from types import SimpleNamespace
+        from app.config import settings
+        from app.services import llm_service as llm_mod
+
+        monkeypatch.setattr(settings, "OPENAI_API_KEY", "sk-test")
+        monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "ant-test")
+        monkeypatch.setattr(settings, "GEMINI_API_KEY", "gem-test")
+
+        valid_intent_json = json.dumps({
+            "interest": "Startups",
+            "audience": "Startup founders",
+            "location": {"city": "London", "state": None, "country": "UK"},
+            "target_type": "individual",
+            "keywords": ["startup", "founder"],
+        })
+
+        # 1. OpenAI: reasoning_effort="none", temperature=0.0, max_completion_tokens=400
+        captured_openai = {}
+
+        class FakeOpenAIClient:
+            def __init__(self, **kwargs):
+                completions = SimpleNamespace(parse=self._parse)
+                self.beta = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def _parse(self, **kwargs):
+                captured_openai.update(kwargs)
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(
+                                parsed=StructuredIntent.model_validate_json(valid_intent_json),
+                                content=valid_intent_json,
+                            )
+                        )
+                    ],
+                    usage=SimpleNamespace(prompt_tokens=120, completion_tokens=45),
+                )
+
+        import openai
+        monkeypatch.setattr(openai, "AsyncOpenAI", FakeOpenAIClient)
+        if hasattr(llm_mod, "AsyncOpenAI"):
+            monkeypatch.setattr(llm_mod, "AsyncOpenAI", FakeOpenAIClient)
+
+        intent_oai = asyncio.run(llm_service._call_openai("Startup founders in London UK", 5.0))
+        assert intent_oai.audience == "Startup founders"
+        assert captured_openai["reasoning_effort"] == "none"
+        assert captured_openai["temperature"] == 0.0
+        assert captured_openai["max_completion_tokens"] == 400
+
+        # 2. Anthropic: thinking={"type": "disabled"} + output_config["effort"] == "low"
+        captured_ant = {}
+
+        class FakeAnthropicClient:
+            def __init__(self, **kwargs):
+                self.messages = SimpleNamespace(create=self._create)
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def _create(self, **kwargs):
+                captured_ant.update(kwargs)
+                return SimpleNamespace(
+                    content=[SimpleNamespace(type="text", text=valid_intent_json)],
+                    usage=SimpleNamespace(input_tokens=110, output_tokens=48),
+                )
+
+        import anthropic
+        monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropicClient)
+        if hasattr(llm_mod, "AsyncAnthropic"):
+            monkeypatch.setattr(llm_mod, "AsyncAnthropic", FakeAnthropicClient)
+
+        intent_ant = asyncio.run(llm_service._call_anthropic("Startup founders in London UK", 5.0))
+        assert intent_ant.location.city == "London"
+        assert captured_ant["thinking"] == {"type": "disabled"}
+        assert captured_ant["output_config"]["effort"] == "low"
+
+        # 3. Gemini: ThinkingConfig(thinking_level="MINIMAL"), max_output_tokens=400, thoughts_token_count tracked
+        captured_gem = {}
+
+        class FakeGeminiAio:
+            def __init__(self):
+                self.models = SimpleNamespace(generate_content=self._generate)
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def _generate(self, **kwargs):
+                captured_gem.update(kwargs)
+                return SimpleNamespace(
+                    text=valid_intent_json,
+                    usage_metadata=SimpleNamespace(
+                        prompt_token_count=100,
+                        candidates_token_count=42,
+                        thoughts_token_count=7,
+                    ),
+                )
+
+        class FakeGeminiClient:
+            def __init__(self, **kwargs):
+                self.aio = FakeGeminiAio()
+
+        from google import genai
+        monkeypatch.setattr(genai, "Client", FakeGeminiClient)
+
+        intent_gem = asyncio.run(llm_service._call_gemini("Startup founders in London UK", 5.0))
+        assert intent_gem.target_type == "individual"
+        cfg = captured_gem["config"]
+        assert cfg.max_output_tokens == 400
+        assert str(cfg.thinking_config.thinking_level).upper().endswith("MINIMAL")
+        assert llm_service.stats["thinking_tokens"] >= 7
+
+    def test_platform_pipeline_metrics_exposed_in_diagnostics(self, monkeypatch):
+        from app.services.prospect_service import prospect_service
+        from app.platforms.base import BasePlatformAdapter
+        from app.services.search_service import search_service
+
+        RateLimitMiddleware.reset()
+        query_service.clear_cache()
+
+        async def mock_search_with_status(query_str: str, num_results: int = 10):
+            if "site:linkedin.com" in query_str:
+                return SearchOutcome(
+                    hits=[
+                        # invalid URL for LinkedIn (/company/ instead of /in/)
+                        {"title": "Acme Corp", "link": "https://www.linkedin.com/company/acme", "snippet": "Startup"},
+                        # parody handle/name
+                        {"title": "Parody Founder (@parody) | LinkedIn", "link": "https://www.linkedin.com/in/parodyfounder", "snippet": "Startup founders in London UK"},
+                        # valid high-relevance founder
+                        {"title": "Jane Smith - Startup Founder | LinkedIn", "link": "https://www.linkedin.com/in/janesmith", "snippet": "Startup founder in London, UK"},
+                        # low-relevance off-topic hit
+                        {"title": "Bob Jones - Chef | LinkedIn", "link": "https://www.linkedin.com/in/bobjones", "snippet": "Pastry chef in Tokyo"},
+                    ],
+                    status=SearchStatus.SUCCESS,
+                    provider="serper",
+                )
+            return SearchOutcome(hits=[], status=SearchStatus.NO_RESULTS, provider="serper")
+
+        monkeypatch.setattr(search_service, "search_with_status", mock_search_with_status)
+        monkeypatch.setattr(
+            llm_service,
+            "parse_query_with_provider",
+            AsyncMock(return_value=(
+                StructuredIntent(
+                    interest="Startups",
+                    audience="Startup founders",
+                    location=LocationDetails(city="London", country="UK"),
+                    target_type="individual",
+                    keywords=["startup", "founder"],
+                ),
+                "heuristic",
+            )),
+        )
+
+        # Ensure LinkedIn adapter passes BasePlatformAdapter's default URL validation cleanly
+        resp = client.post(
+            "/prospect-discovery?include_diagnostics=true",
+            json={"query": "Startup founders in London UK"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        pm = body["provider_health"]["platform_metrics"]
+        assert "LinkedIn" in pm
+        li = pm["LinkedIn"]
+        assert li["search_status"] == SearchStatus.SUCCESS.value
+        assert li["search_hits"] == 4
+        assert li["invalid_urls"] >= 1
+        assert li["parody_or_gimmick"] >= 1
+        assert li["below_relevance_threshold"] >= 1
+        assert li["retained_candidates"] == 1
+        assert body["total_prospects"] == 1
+
+    def test_entity_classification_preserves_lowercase_names_and_hospitality_orgs(self):
+        assert classify_candidate_entity("john doe", "X", "https://x.com/johndoe") != "parody_or_gimmick"
+        for org_name in ("Dubai Bistro", "Grand Hotel Dubai", "Cafe Roma"):
+            assert classify_candidate_entity(org_name, "Google", "https://example.com") == "business"
+
+        intent_biz = StructuredIntent(
+            interest="Restaurants",
+            audience="Restaurant owners",
+            location=LocationDetails(city="Dubai", country="UAE"),
+            target_type="business",
+            keywords=["restaurant", "bistro"],
+        )
+        candidates = [
+            RawCandidate(
+                platform="Google",
+                name="Dubai Bistro",
+                location="Dubai, UAE",
+                profile_url="https://dubaibistro.ae",
+                title="Dubai Bistro - Restaurant in Dubai",
+                snippet="Fine dining restaurant in Dubai, UAE.",
+                entity_type="business",
+            )
+        ]
+        kept = relevance_service.filter_relevant_candidates(candidates, intent_biz)
+        assert [c.name for c in kept] == ["Dubai Bistro"]
+
+    def test_infer_location_never_fabricates_unconfirmed_country(self):
+        from app.platforms.linkedin import LinkedInAdapter
+
+        adapter = LinkedInAdapter()
+        intent = StructuredIntent(
+            interest="Startups",
+            audience="Startup Coach",
+            location=LocationDetails(city="Ahmedabad", country="India"),
+            target_type="individual",
+        )
+        # Snippet mentions Ahmedabad only, NOT India -> must stay "Ahmedabad"
+        inferred = adapter._infer_location("Startup Coach in Ahmedabad building SaaS", intent)
+        assert inferred == "Ahmedabad"
+
+    def test_format_tel_uri_rfc3966_local_and_global(self):
+        assert format_tel_uri("202-555-0199", phone_context="acme.com") == "tel:2025550199;phone-context=acme.com"
+        assert format_tel_uri("202-555-0199") == ""
+        assert format_tel_uri("+44 20 7946 0991") == "tel:+442079460991"
+
+    def test_cors_exposes_telemetry_headers(self):
+        RateLimitMiddleware.reset()
+        resp = client.post(
+            "/prospect-discovery",
+            headers={"Origin": "http://localhost:4000"},
+            json={"query": ""},
+        )
+        expose = resp.headers.get("access-control-expose-headers", "")
+        assert "X-LLM-Provider" in expose
+        assert "X-Platforms-Succeeded" in expose
+
+
+
 
 
