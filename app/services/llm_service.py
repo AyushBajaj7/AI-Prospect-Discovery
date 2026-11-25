@@ -369,6 +369,102 @@ class LLMService:
         )
 
     # ------------------------------------------------------------------
+    # Provider capability detection & targeted unsupported-param retry
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _openai_supports_reasoning_effort(model: str) -> bool:
+        m = (model or "").lower()
+        return m.startswith(("gpt-5", "gpt-6", "o1", "o3", "o4"))
+
+    @staticmethod
+    def _openai_default_reasoning_effort(model: str) -> Optional[str]:
+        m = (model or "").lower()
+        if m.startswith(("gpt-5", "gpt-6")):
+            return "none"
+        if m.startswith(("o1", "o3", "o4")):
+            return "low"
+        return None
+
+    @staticmethod
+    def _gemini_thinking_level(model: str) -> Optional[str]:
+        m = (model or "").lower()
+        if "gemini-3" in m:
+            return "MINIMAL"
+        return None
+
+    @staticmethod
+    def _anthropic_supports_disabled_thinking(model: str) -> bool:
+        m = (model or "").lower()
+        return any(tok in m for tok in ("claude-haiku-5", "claude-sonnet-4", "claude-opus-4", "claude-3-7"))
+
+    @staticmethod
+    def _is_unsupported_reasoning_param_error(exc: Exception) -> bool:
+        """
+        Return True ONLY when a provider rejects an optional reasoning, thinking,
+        effort, or temperature parameter (never for auth errors, missing models,
+        malformed schemas, or unrelated HTTP 400 errors).
+        """
+        msg = str(exc).lower()
+        if any(
+            bad in msg
+            for bad in (
+                "model_not_found",
+                "does not exist",
+                "unknown model",
+                "invalid model",
+                "response_format",
+                "json_schema",
+                "response_schema",
+                "context_length",
+                "rate_limit",
+                "authentication",
+            )
+        ):
+            return False
+
+        status = getattr(exc, "status_code", None)
+        if status is None:
+            status = getattr(exc, "code", None)
+
+        if isinstance(exc, TypeError):
+            return any(
+                p in msg
+                for p in ("reasoning_effort", "thinking_config", "thinking_level", "thinking", "output_config")
+            )
+
+        if status is not None and status != 400:
+            return False
+
+        mentions_param = any(
+            p in msg
+            for p in (
+                "reasoning_effort",
+                "reasoning.effort",
+                "thinking_level",
+                "thinking_config",
+                "thinking",
+                "output_config",
+                "effort",
+                "temperature",
+            )
+        )
+        mentions_unsupported = any(
+            phrase in msg
+            for phrase in (
+                "unsupported parameter",
+                "unsupported value",
+                "unknown field",
+                "extra inputs are not permitted",
+                "not supported",
+                "does not support",
+                "cannot be disabled",
+                "unexpected keyword argument",
+            )
+        )
+        return mentions_param and mentions_unsupported
+
+    # ------------------------------------------------------------------
     # Provider callers (modern SDKs + structured outputs + timeouts)
     # ------------------------------------------------------------------
 
@@ -379,17 +475,35 @@ class LLMService:
             api_key=settings.OPENAI_API_KEY,
             timeout=timeout_sec,
         ) as client:
-            resp = await client.beta.chat.completions.parse(
+            base_kwargs = dict(
                 model=settings.OPENAI_MODEL,
                 response_format=StructuredIntent,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": query},
                 ],
-                reasoning_effort="none",
-                temperature=0.0,
                 max_completion_tokens=400,
             )
+            opts = {}
+            if self._openai_supports_reasoning_effort(settings.OPENAI_MODEL):
+                effort = self._openai_default_reasoning_effort(settings.OPENAI_MODEL)
+                if effort:
+                    opts["reasoning_effort"] = effort
+            if not (settings.OPENAI_MODEL or "").lower().startswith(("o1", "o3", "o4")):
+                opts["temperature"] = 0.0
+
+            try:
+                resp = await client.beta.chat.completions.parse(**base_kwargs, **opts)
+            except Exception as exc:
+                if opts and self._is_unsupported_reasoning_param_error(exc):
+                    logger.warning(
+                        "Retrying OpenAI (%s) without optional reasoning/temperature parameters.",
+                        settings.OPENAI_MODEL,
+                    )
+                    resp = await client.beta.chat.completions.parse(**base_kwargs)
+                else:
+                    raise
+
             if resp.usage:
                 self.stats["prompt_tokens"] += resp.usage.prompt_tokens
                 self.stats["completion_tokens"] += resp.usage.completion_tokens
@@ -404,21 +518,44 @@ class LLMService:
         from google.genai import types
 
         async with genai.Client(api_key=settings.GEMINI_API_KEY).aio as aclient:
-            resp = await asyncio.wait_for(
-                aclient.models.generate_content(
-                    model=settings.GEMINI_MODEL,
-                    contents=query,
-                    config=types.GenerateContentConfig(
-                        system_instruction=SYSTEM_PROMPT,
-                        response_mime_type="application/json",
-                        response_schema=StructuredIntent,
-                        thinking_config=types.ThinkingConfig(thinking_level="MINIMAL"),
-                        temperature=0.0,
-                        max_output_tokens=400,
-                    ),
-                ),
-                timeout=timeout_sec,
+            level = self._gemini_thinking_level(settings.GEMINI_MODEL)
+            config_kwargs = dict(
+                system_instruction=SYSTEM_PROMPT,
+                response_mime_type="application/json",
+                response_schema=StructuredIntent,
+                temperature=0.0,
+                max_output_tokens=400,
             )
+            if level:
+                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=level)
+
+            try:
+                resp = await asyncio.wait_for(
+                    aclient.models.generate_content(
+                        model=settings.GEMINI_MODEL,
+                        contents=query,
+                        config=types.GenerateContentConfig(**config_kwargs),
+                    ),
+                    timeout=timeout_sec,
+                )
+            except Exception as exc:
+                if "thinking_config" in config_kwargs and self._is_unsupported_reasoning_param_error(exc):
+                    logger.warning(
+                        "Retrying Gemini (%s) without optional thinking_config parameter.",
+                        settings.GEMINI_MODEL,
+                    )
+                    fallback_kwargs = {k: v for k, v in config_kwargs.items() if k != "thinking_config"}
+                    resp = await asyncio.wait_for(
+                        aclient.models.generate_content(
+                            model=settings.GEMINI_MODEL,
+                            contents=query,
+                            config=types.GenerateContentConfig(**fallback_kwargs),
+                        ),
+                        timeout=timeout_sec,
+                    )
+                else:
+                    raise
+
             usage = getattr(resp, "usage_metadata", None)
             if usage:
                 self.stats["prompt_tokens"] += getattr(usage, "prompt_token_count", 0) or 0
@@ -439,20 +576,42 @@ class LLMService:
             api_key=settings.ANTHROPIC_API_KEY,
             timeout=timeout_sec,
         ) as client:
-            resp = await client.messages.create(
+            schema = anthropic.transform_schema(StructuredIntent)
+            base_kwargs = dict(
                 model=settings.ANTHROPIC_MODEL,
                 max_tokens=400,
                 system=SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": query}],
-                thinking={"type": "disabled"},
-                output_config={
-                    "effort": "low",
-                    "format": {
-                        "type": "json_schema",
-                        "schema": anthropic.transform_schema(StructuredIntent),
-                    },
-                },
             )
+            use_effort_opts = self._anthropic_supports_disabled_thinking(settings.ANTHROPIC_MODEL)
+            req_kwargs = dict(base_kwargs)
+            if use_effort_opts:
+                req_kwargs["thinking"] = {"type": "disabled"}
+                req_kwargs["output_config"] = {
+                    "effort": "low",
+                    "format": {"type": "json_schema", "schema": schema},
+                }
+            else:
+                req_kwargs["output_config"] = {
+                    "format": {"type": "json_schema", "schema": schema},
+                }
+
+            try:
+                resp = await client.messages.create(**req_kwargs)
+            except Exception as exc:
+                if use_effort_opts and self._is_unsupported_reasoning_param_error(exc):
+                    logger.warning(
+                        "Retrying Anthropic (%s) without optional thinking/effort parameters.",
+                        settings.ANTHROPIC_MODEL,
+                    )
+                    fallback_kwargs = dict(base_kwargs)
+                    fallback_kwargs["output_config"] = {
+                        "format": {"type": "json_schema", "schema": schema},
+                    }
+                    resp = await client.messages.create(**fallback_kwargs)
+                else:
+                    raise
+
             if getattr(resp, "usage", None):
                 self.stats["prompt_tokens"] += resp.usage.input_tokens
                 self.stats["completion_tokens"] += resp.usage.output_tokens

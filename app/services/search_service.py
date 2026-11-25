@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -33,6 +34,10 @@ class SearchOutcome:
     status: SearchStatus
     provider: str = "none"
     cached: bool = False
+    http_status: Optional[int] = None
+    exception_type: Optional[str] = None
+    failure_reason: Optional[str] = None
+    retry_count: int = 0
 
 
 class SearchService:
@@ -148,8 +153,7 @@ class SearchService:
             candidates.append("ddg")
 
         async with self._semaphore:
-            attempted_statuses: List[SearchStatus] = []
-            last_provider = "none"
+            attempted_outcomes: List[SearchOutcome] = []
             for prov in candidates:
                 if prov == "serper":
                     outcome = await self._search_serper(query, num_results)
@@ -161,13 +165,20 @@ class SearchService:
                 if outcome.hits:
                     self._put_cache(query, num_results, outcome.hits, outcome.provider)
                     return outcome
-                attempted_statuses.append(outcome.status)
-                last_provider = outcome.provider
+                attempted_outcomes.append(outcome)
 
+            agg_status = self._aggregate_failure_status([o.status for o in attempted_outcomes])
+            rep = next((o for o in attempted_outcomes if o.status == agg_status), None)
+            if rep is None and attempted_outcomes:
+                rep = attempted_outcomes[-1]
             return SearchOutcome(
                 hits=[],
-                status=self._aggregate_failure_status(attempted_statuses),
-                provider=last_provider,
+                status=agg_status,
+                provider=rep.provider if rep else "none",
+                http_status=rep.http_status if rep else None,
+                exception_type=rep.exception_type if rep else None,
+                failure_reason=rep.failure_reason if rep else None,
+                retry_count=sum(o.retry_count for o in attempted_outcomes),
             )
 
     async def search(self, query: str, num_results: int = 5) -> List[SearchHit]:
@@ -181,6 +192,9 @@ class SearchService:
 
     async def _search_serper(self, query: str, num: int) -> SearchOutcome:
         last_status = SearchStatus.PROVIDER_ERROR
+        last_http_status: Optional[int] = None
+        last_exc_type: Optional[str] = None
+        last_reason: Optional[str] = None
         for attempt in range(2):
             try:
                 async def _do(client: httpx.AsyncClient):
@@ -196,10 +210,19 @@ class SearchService:
                 resp = await self._run_http_call(_do)
                 if resp.status_code == 429:
                     last_status = SearchStatus.RATE_LIMITED
+                    last_http_status = 429
+                    last_reason = "http_429_rate_limited"
                     if attempt == 0:
                         await asyncio.sleep(0.8)
                         continue
-                    return SearchOutcome(hits=[], status=SearchStatus.RATE_LIMITED, provider="serper")
+                    return SearchOutcome(
+                        hits=[],
+                        status=SearchStatus.RATE_LIMITED,
+                        provider="serper",
+                        http_status=429,
+                        failure_reason="http_429_rate_limited",
+                        retry_count=attempt,
+                    )
 
                 resp.raise_for_status()
                 hits = [
@@ -211,23 +234,58 @@ class SearchService:
                     for item in resp.json().get("organic", [])
                 ]
                 status = SearchStatus.SUCCESS if hits else SearchStatus.NO_RESULTS
-                return SearchOutcome(hits=hits, status=status, provider="serper")
+                return SearchOutcome(
+                    hits=hits,
+                    status=status,
+                    provider="serper",
+                    http_status=resp.status_code,
+                    retry_count=attempt,
+                )
 
-            except httpx.TimeoutException:
+            except httpx.TimeoutException as exc:
                 logger.warning("Serper search timed out.")
-                return SearchOutcome(hits=[], status=SearchStatus.TIMEOUT, provider="serper")
+                return SearchOutcome(
+                    hits=[],
+                    status=SearchStatus.TIMEOUT,
+                    provider="serper",
+                    exception_type=type(exc).__name__,
+                    failure_reason="timeout",
+                    retry_count=attempt,
+                )
             except httpx.HTTPStatusError as exc:
-                logger.warning("Serper API HTTP %s.", exc.response.status_code)
-                return SearchOutcome(hits=[], status=SearchStatus.PROVIDER_ERROR, provider="serper")
+                sc = exc.response.status_code
+                logger.warning("Serper API HTTP %s.", sc)
+                return SearchOutcome(
+                    hits=[],
+                    status=SearchStatus.PROVIDER_ERROR,
+                    provider="serper",
+                    http_status=sc,
+                    exception_type=type(exc).__name__,
+                    failure_reason=f"http_{sc}",
+                    retry_count=attempt,
+                )
             except Exception as exc:
                 logger.warning("Serper search error: %s", type(exc).__name__)
                 last_status = SearchStatus.PROVIDER_ERROR
+                last_exc_type = type(exc).__name__
+                last_reason = "request_error"
                 if attempt == 0:
                     await asyncio.sleep(0.4)
-        return SearchOutcome(hits=[], status=last_status, provider="serper")
+        return SearchOutcome(
+            hits=[],
+            status=last_status,
+            provider="serper",
+            http_status=last_http_status,
+            exception_type=last_exc_type,
+            failure_reason=last_reason,
+            retry_count=1,
+        )
 
     async def _search_brave(self, query: str, num: int) -> SearchOutcome:
         last_status = SearchStatus.PROVIDER_ERROR
+        last_http_status: Optional[int] = None
+        last_exc_type: Optional[str] = None
+        last_reason: Optional[str] = None
         for attempt in range(2):
             try:
                 async def _do(client: httpx.AsyncClient):
@@ -243,10 +301,19 @@ class SearchService:
                 resp = await self._run_http_call(_do)
                 if resp.status_code == 429:
                     last_status = SearchStatus.RATE_LIMITED
+                    last_http_status = 429
+                    last_reason = "http_429_rate_limited"
                     if attempt == 0:
                         await asyncio.sleep(0.8)
                         continue
-                    return SearchOutcome(hits=[], status=SearchStatus.RATE_LIMITED, provider="brave")
+                    return SearchOutcome(
+                        hits=[],
+                        status=SearchStatus.RATE_LIMITED,
+                        provider="brave",
+                        http_status=429,
+                        failure_reason="http_429_rate_limited",
+                        retry_count=attempt,
+                    )
 
                 resp.raise_for_status()
                 hits = [
@@ -258,23 +325,91 @@ class SearchService:
                     for item in resp.json().get("web", {}).get("results", [])
                 ]
                 status = SearchStatus.SUCCESS if hits else SearchStatus.NO_RESULTS
-                return SearchOutcome(hits=hits, status=status, provider="brave")
+                return SearchOutcome(
+                    hits=hits,
+                    status=status,
+                    provider="brave",
+                    http_status=resp.status_code,
+                    retry_count=attempt,
+                )
 
-            except httpx.TimeoutException:
+            except httpx.TimeoutException as exc:
                 logger.warning("Brave search timed out.")
-                return SearchOutcome(hits=[], status=SearchStatus.TIMEOUT, provider="brave")
+                return SearchOutcome(
+                    hits=[],
+                    status=SearchStatus.TIMEOUT,
+                    provider="brave",
+                    exception_type=type(exc).__name__,
+                    failure_reason="timeout",
+                    retry_count=attempt,
+                )
             except httpx.HTTPStatusError as exc:
-                logger.warning("Brave API HTTP %s.", exc.response.status_code)
-                return SearchOutcome(hits=[], status=SearchStatus.PROVIDER_ERROR, provider="brave")
+                sc = exc.response.status_code
+                logger.warning("Brave API HTTP %s.", sc)
+                return SearchOutcome(
+                    hits=[],
+                    status=SearchStatus.PROVIDER_ERROR,
+                    provider="brave",
+                    http_status=sc,
+                    exception_type=type(exc).__name__,
+                    failure_reason=f"http_{sc}",
+                    retry_count=attempt,
+                )
             except Exception as exc:
                 logger.warning("Brave search error: %s", type(exc).__name__)
                 last_status = SearchStatus.PROVIDER_ERROR
+                last_exc_type = type(exc).__name__
+                last_reason = "request_error"
                 if attempt == 0:
                     await asyncio.sleep(0.4)
-        return SearchOutcome(hits=[], status=last_status, provider="brave")
+        return SearchOutcome(
+            hits=[],
+            status=last_status,
+            provider="brave",
+            http_status=last_http_status,
+            exception_type=last_exc_type,
+            failure_reason=last_reason,
+            retry_count=1,
+        )
+
+    @staticmethod
+    def _classify_ddg_exception(exc: Exception) -> Tuple[SearchStatus, Optional[int], str]:
+        """
+        Classify DDG/ddgs failures using typed exceptions, HTTP status codes, and
+        explicit anti-bot / challenge signatures without conflating bot challenges
+        with confirmed HTTP 429 rate limiting.
+        """
+        exc_name = type(exc).__name__.lower()
+        exc_str = str(exc).lower()
+
+        http_status: Optional[int] = getattr(exc, "status_code", None)
+        if http_status is None:
+            resp = getattr(exc, "response", None)
+            if resp is not None:
+                http_status = getattr(resp, "status_code", None)
+        if http_status is None:
+            m = re.search(r"\b(?:status[_\s=:]+|http\s+)([245]\d{2})\b", exc_str)
+            if m:
+                http_status = int(m.group(1))
+            elif " 429" in exc_str or exc_str.startswith("429"):
+                http_status = 429
+
+        if "timeout" in exc_name or "timeout" in exc_str or isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+            return SearchStatus.TIMEOUT, http_status, "timeout"
+
+        if "ratelimit" in exc_name or http_status == 429 or "429" in exc_str or "rate limit" in exc_str:
+            return SearchStatus.RATE_LIMITED, http_status or 429, "rate_limited"
+
+        if any(tok in exc_str for tok in ("captcha", "challenge", "bot", "202", "403", "forbidden")):
+            return SearchStatus.PROVIDER_ERROR, http_status, "anti_bot_or_challenge"
+
+        if "no results found" in exc_str:
+            return SearchStatus.NO_RESULTS, http_status, "no_results_exception"
+
+        return SearchStatus.PROVIDER_ERROR, http_status, "ddgs_error"
 
     async def _search_ddg(self, query: str, num: int) -> SearchOutcome:
-        """DuckDuckGo via `ddgs`, offloaded to thread with status classification."""
+        """DuckDuckGo via `ddgs`, offloaded to thread with typed error & HTTP classification."""
 
         def _sync_search() -> List[SearchHit]:
             try:
@@ -293,26 +428,44 @@ class SearchService:
             ]
 
         last_status = SearchStatus.PROVIDER_ERROR
+        last_http_status: Optional[int] = None
+        last_exc_type: Optional[str] = None
+        last_reason: Optional[str] = None
+        retries = 0
         for attempt in range(2):
             try:
                 hits = await asyncio.to_thread(_sync_search)
                 status = SearchStatus.SUCCESS if hits else SearchStatus.NO_RESULTS
-                return SearchOutcome(hits=hits, status=status, provider="ddg")
-            except TimeoutError:
-                last_status = SearchStatus.TIMEOUT
+                return SearchOutcome(
+                    hits=hits,
+                    status=status,
+                    provider="ddg",
+                    retry_count=attempt,
+                )
             except Exception as exc:
-                exc_str = str(exc).lower()
-                if "429" in exc_str or "ratelimit" in exc_str or "rate limit" in exc_str:
-                    last_status = SearchStatus.RATE_LIMITED
-                elif "timeout" in exc_str:
-                    last_status = SearchStatus.TIMEOUT
-                else:
-                    last_status = SearchStatus.PROVIDER_ERROR
-                logger.warning("DDG search error (attempt %d): %s", attempt + 1, type(exc).__name__)
+                last_status, last_http_status, last_reason = self._classify_ddg_exception(exc)
+                last_exc_type = type(exc).__name__
+                logger.warning(
+                    "DDG search error (attempt %d): type=%s http=%s reason=%s status=%s",
+                    attempt + 1,
+                    last_exc_type,
+                    last_http_status,
+                    last_reason,
+                    last_status.value,
+                )
             if attempt == 0:
+                retries = 1
                 await asyncio.sleep(0.6)
 
-        return SearchOutcome(hits=[], status=last_status, provider="ddg")
+        return SearchOutcome(
+            hits=[],
+            status=last_status,
+            provider="ddg",
+            http_status=last_http_status,
+            exception_type=last_exc_type,
+            failure_reason=last_reason,
+            retry_count=retries,
+        )
 
 
 search_service = SearchService()

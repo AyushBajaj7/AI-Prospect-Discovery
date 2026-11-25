@@ -8,8 +8,14 @@ from __future__ import annotations
 
 import re
 from typing import Dict, List
+from urllib.parse import urlparse
 
-from app.utils.validators import is_valid_email, is_valid_phone, normalize_whatsapp_url
+from app.utils.validators import (
+    is_generic_role_email,
+    is_valid_email,
+    is_valid_phone,
+    normalize_whatsapp_url,
+)
 
 _MAX_SCAN_CHARS = 10_000
 
@@ -101,3 +107,38 @@ def extract_all_contacts(text: str) -> Dict[str, List[str]]:
         "phones": extract_phones(text),
         "whatsapp_links": extract_whatsapp_links(text),
     }
+
+
+def filter_attributed_emails(
+    emails: List[str],
+    entity_type: str,
+    profile_url: str,
+) -> List[str]:
+    """
+    Distinguish personal emails from organization/role-based addresses (`info@`,
+    `cofounder@`, `team@`, `sales@`, etc.):
+      * Business entities retain organization contact emails.
+      * Individual and unknown candidates drop generic role emails unless the
+        profile URL itself is a custom first-party site on the email domain.
+    """
+    if not emails or entity_type == "business":
+        return list(emails)
+
+    try:
+        profile_host = (urlparse(profile_url or "").hostname or "").lower().removeprefix("www.")
+    except Exception:
+        profile_host = ""
+
+    kept: List[str] = []
+    for email in emails:
+        if not is_generic_role_email(email):
+            kept.append(email)
+            continue
+        email_domain = email.partition("@")[2].lower().removeprefix("www.")
+        if (
+            profile_host
+            and email_domain
+            and (profile_host == email_domain or profile_host.endswith("." + email_domain))
+        ):
+            kept.append(email)
+    return kept

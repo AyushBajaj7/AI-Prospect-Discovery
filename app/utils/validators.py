@@ -286,6 +286,56 @@ def clean_url(url: str) -> str:
         return url
 
 
+GENERIC_EMAIL_PREFIXES = frozenset(
+    {
+        "info", "hello", "contact", "support", "help", "admin", "team",
+        "sales", "marketing", "office", "hi", "enquiries", "inquiries",
+        "press", "media", "jobs", "careers", "founder", "founders",
+        "cofounder", "cofounders", "ceo", "noreply", "hr", "recruiting",
+        "talent", "billing", "pr", "partnerships", "connect", "mail",
+        "general", "feedback", "bookings", "reservations", "orders",
+    }
+)
+
+_NON_AUTHORITATIVE_PHONE_HOSTS = frozenset(
+    {
+        "linkedin.com", "x.com", "twitter.com", "instagram.com",
+        "facebook.com", "fb.com", "youtube.com", "youtu.be",
+        "threads.net", "threads.com", "wa.me", "whatsapp.com",
+        "about.me", "linktr.ee", "bio.link", "beacons.ai", "carrd.co",
+        "medium.com", "substack.com", "github.com",
+    }
+)
+
+
+def is_generic_role_email(email: str) -> bool:
+    """Return True if an email local-part is an organizational or role-based inbox."""
+    if not email or "@" not in email:
+        return False
+    local = email.strip().lower().partition("@")[0]
+    normalized_local = re.sub(r"[.\-_+]", "", local)
+    return local in GENERIC_EMAIL_PREFIXES or normalized_local in GENERIC_EMAIL_PREFIXES
+
+
+def derive_phone_context(profile_url: str, platform: str) -> Optional[str]:
+    """
+    Return a domain `phone-context` for local un-prefixed phone numbers ONLY
+    when the source URL is a first-party personal or business website, never
+    for third-party social networks, link-in-bio services, or messaging hosts.
+    """
+    if platform not in {"Google", "Email"} or not profile_url:
+        return None
+    try:
+        hostname = (urlparse(profile_url.strip()).hostname or "").lower()
+    except Exception:
+        return None
+    if not hostname or "." not in hostname or _is_unsafe_host(hostname):
+        return None
+    if any(_matches_domain(hostname, host) for host in _NON_AUTHORITATIVE_PHONE_HOSTS):
+        return None
+    return hostname
+
+
 def format_tel_uri(phone: str, phone_context: Optional[str] = None) -> str:
     """
     Format a validated phone string as an RFC 3966-compliant `tel:` URI:

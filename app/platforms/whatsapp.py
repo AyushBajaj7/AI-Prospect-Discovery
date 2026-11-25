@@ -10,7 +10,7 @@ import logging
 from typing import List
 
 from app.platforms.base import BasePlatformAdapter
-from app.platforms.contacts import extract_all_contacts
+from app.platforms.contacts import extract_all_contacts, filter_attributed_emails
 from app.schemas import PlatformPipelineMetrics, RawCandidate, SocialLink, StructuredIntent
 from app.utils.normalizers import clean_name, classify_candidate_entity
 from app.utils.validators import format_tel_uri, is_valid_profile_url, normalize_whatsapp_url
@@ -34,10 +34,16 @@ class WhatsAppAdapter(BasePlatformAdapter):
         self, intent: StructuredIntent, max_results: int = 5
     ) -> List[RawCandidate]:
         query = self.build_query(intent)
-        hits, search_status = await self._execute_search(query, max_results)
+        outcome = await self._execute_search(query, max_results)
+        hits = outcome.hits
         metrics = PlatformPipelineMetrics(
-            search_status=search_status,
+            search_status=outcome.status,
             search_hits=len(hits),
+            provider=outcome.provider,
+            http_status=outcome.http_status,
+            exception_type=outcome.exception_type,
+            failure_reason=outcome.failure_reason,
+            retry_count=outcome.retry_count,
         )
 
         candidates: List[RawCandidate] = []
@@ -72,14 +78,20 @@ class WhatsAppAdapter(BasePlatformAdapter):
                 )
                 continue
 
+            entity_type = classify_candidate_entity(
+                name, "WhatsApp", wa_links[0], title, snippet
+            )
+            attributed_emails = filter_attributed_emails(
+                contacts["emails"], entity_type, wa_links[0]
+            )
             location = self._infer_location(combined, intent)
             social_links: List[SocialLink] = [
                 SocialLink(platform="WhatsApp", link=wa) for wa in wa_links
             ]
-            for email in contacts["emails"]:
+            for email in attributed_emails:
                 social_links.append(SocialLink(platform="Email", link=f"mailto:{email}"))
             for phone in contacts["phones"]:
-                tel_uri = format_tel_uri(phone, phone_context="wa.me")
+                tel_uri = format_tel_uri(phone, phone_context=None)
                 if tel_uri:
                     social_links.append(SocialLink(platform="Phone", link=tel_uri))
 
@@ -91,14 +103,12 @@ class WhatsAppAdapter(BasePlatformAdapter):
                     profile_url=wa_links[0],
                     title=title,
                     snippet=snippet,
-                    emails=contacts["emails"],
+                    emails=attributed_emails,
                     phones=contacts["phones"],
                     whatsapp_links=wa_links,
                     social_links=social_links,
                     verification_status="url_format_validated",
-                    entity_type=classify_candidate_entity(
-                        name, "WhatsApp", wa_links[0], title, snippet
-                    ),
+                    entity_type=entity_type,
                 )
             )
 

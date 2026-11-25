@@ -21,6 +21,7 @@ import re
 from typing import List, Optional, Set
 
 from app.schemas import Prospect, RawCandidate, SocialLink
+from app.utils.validators import is_generic_role_email
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +32,6 @@ _GENERIC_HANDLES: Set[str] = {
 
 _EXCLUSIVE_SOCIAL_PLATFORMS: Set[str] = {
     "LinkedIn", "X", "Instagram", "Threads", "YouTube", "Facebook",
-}
-
-_GENERIC_EMAIL_PREFIXES: Set[str] = {
-    "info", "hello", "contact", "support", "help", "admin", "team",
-    "sales", "marketing", "office", "hi", "enquiries", "inquiries",
-    "press", "media", "jobs", "careers", "founder", "cofounder", "ceo",
 }
 
 
@@ -146,8 +141,7 @@ class DeduplicationService:
                 and len(self._normalize_name(a.name).split()) >= 2
             )
             for em in shared_emails:
-                local_part = em.split("@")[0]
-                if local_part in _GENERIC_EMAIL_PREFIXES:
+                if is_generic_role_email(em):
                     if (exact_full_name and self._locations_compatible(a.location, b.location)) or same_handle:
                         return True
                 elif names_compatible or same_handle:

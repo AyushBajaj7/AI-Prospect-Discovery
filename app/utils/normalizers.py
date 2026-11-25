@@ -75,10 +75,11 @@ def clean_name(raw_title: str, platform: str = "") -> str:
     for pattern in _TITLE_CLEANUP:
         name = re.sub(pattern, "", name, flags=re.IGNORECASE).strip()
 
-    # 2. Handle "Name (@handle)" – keep only the name part
+    # 2. Handle "Name (@handle)" and trailing "Name @handle" – keep only the name part
     handle_match = re.match(r"^([^(@]{2,}?)\s*\(@[A-Za-z0-9_.]+\)", name)
     if handle_match:
         name = handle_match.group(1).strip()
+    name = re.sub(r"\s+@[A-Za-z0-9_.-]+$", "", name).strip()
 
     # 3. Handle "Name - Role | Company" – keep only the first segment
     for sep in (" - ", " – ", " — ", " | ", " : "):
@@ -217,6 +218,9 @@ _ORG_NAME_INDICATORS_RE = re.compile(
     r"enterprise|collective|agency|agencies|studios?|ventures|capital|solutions|"
     r"services|consultancy|consulting|group|academy|university|spotlight|"
     r"directory|outlets?|club|society|community|organization|organisation|"
+    r"digital\s+marketing|marketing|branding|advertising|publications?|magazine|"
+    r"newsletter|podcast|hub|labs?|official|platform|software|technologies|"
+    r"systems|analytics|insights|"
     r"restaurants?|hotels?|cafes?|cafés?|bistros?|bakeries|bakery|bars?|"
     r"lounges?|grills?|kitchens?|diners?|catering|resorts?|clinics?|salons?|"
     r"boutiques?|shops?|stores?|company|companies|firms?|partners|hospitality|"
@@ -226,16 +230,48 @@ _ORG_NAME_INDICATORS_RE = re.compile(
 )
 
 _ORG_URL_PATH_RE = re.compile(
-    r"(?:eventbrite\.[^/]+/o/|meetup\.com/|/company/|/organization/|/school/|/outlets)",
+    r"(?:eventbrite\.[^/]+/o/|meetup\.com/|/company/|/organization/|/school/|/outlets|/pages/|/pg/)",
+    re.IGNORECASE,
+)
+
+_ORG_CONTEXT_RE = re.compile(
+    r"\b(?:our\s+(?:agency|company|team|clients|services|mission|restaurant|menu|firm|studio)|"
+    r"we\s+(?:are\s+a|help\s+(?:businesses|brands|companies|startups)|provide|offer|specialize|serve)|"
+    r"full[\-\s]service\s+(?:digital|marketing|agency|creative|studio)|"
+    r"official\s+(?:page|channel|website|account|community)|"
+    r"(?:community|network|platform|hub|resource|guide|directory)\s+(?:for|of)\s+|"
+    r"dedicated\s+to\s+(?:businesses|founders|startups|entrepreneurs)|"
+    r"book\s+a\s+table|order\s+online|opening\s+hours)\b",
+    re.IGNORECASE,
+)
+
+_PREPOSITION_ORG_NAME_RE = re.compile(
+    r"^[A-Za-z][A-Za-z0-9'&\-]*(?:\s+[A-Za-z][A-Za-z0-9'&\-]*)?\s+of\s+[A-Za-z][A-Za-z\s\-]+$",
     re.IGNORECASE,
 )
 
 _PERSON_ROLE_RE = re.compile(
     r"\b(?:founder|co-founder|cofounder|ceo|cto|cfo|owner|director|manager|"
     r"engineer|developer|designer|consultant|advisor|investor|coach|analyst|"
-    r"journalist|writer|entrepreneur|lover|enthusiast|fan)\b",
+    r"journalist|writer|author|entrepreneur|lover|enthusiast|fan|he/him|she/her|"
+    r"they/them|i\s+am|i'm)\b",
     re.IGNORECASE,
 )
+
+
+def _handle_corroborates_name(name: str, platform: str, profile_url: str) -> bool:
+    """Return True when the URL handle strongly echoes tokens of `name`."""
+    handle = extract_handle(profile_url, platform) or ""
+    handle_clean = re.sub(r"[^a-z0-9]", "", handle.lower())
+    if len(handle_clean) < 4:
+        return False
+    name_tokens = [re.sub(r"[^a-z0-9]", "", tok.lower()) for tok in name.split()]
+    name_tokens = [tok for tok in name_tokens if len(tok) >= 2]
+    if len(name_tokens) < 2:
+        return False
+    # Check full surname OR >=2 name tokens inside handle (e.g. john+doe -> johndoe, a.b.+dharmadhikari)
+    matched = sum(1 for tok in name_tokens if len(tok) >= 3 and tok in handle_clean)
+    return matched >= 2 or (len(name_tokens[-1]) >= 6 and name_tokens[-1] in handle_clean)
 
 
 def classify_candidate_entity(
@@ -248,10 +284,11 @@ def classify_candidate_entity(
     """
     Classify a candidate prospect using combined name, URL, title, and snippet
     evidence. Returns `"unknown"` when identity signals are genuinely ambiguous
-    rather than forcing a mis-classification.
+    rather than assuming title-cased words belong to a person.
     """
     n_clean = (name or "").strip()
     url_lower = (profile_url or "").lower()
+    combined_context = f"{title} {snippet}".strip()
 
     # 1. Explicit parody / satire / meme / fan-page / gimmick signals
     if _PARODY_OR_GIMMICK_RE.search(n_clean) or _PARODY_OR_GIMMICK_RE.search(title):
@@ -273,29 +310,48 @@ def classify_candidate_entity(
     if has_org_name and not is_personal_linkedin:
         return "business"
 
+    if not is_personal_linkedin:
+        if _PREPOSITION_ORG_NAME_RE.search(n_clean):
+            return "business"
+        n_words = n_clean.split()
+        # Trailing uppercase business acronym like "Main Street ROI", "Apex PPC", "Acme B2B"
+        if len(n_words) >= 2 and re.match(r"^[A-Z]{2,5}$", n_words[-1]) and n_words[-1] not in {"UK", "USA", "UAE", "CEO", "CTO", "MD"}:
+            return "business"
+        # First-person / institutional org copy in title or snippet without personal LinkedIn URL
+        if _ORG_CONTEXT_RE.search(combined_context) and not re.search(
+            r"\b(?:co-?founder\s+(?:of|at)|founder\s+(?:of|at)|owner\s+(?:of|at))\b",
+            combined_context,
+            re.IGNORECASE,
+        ):
+            return "business"
+
+    if is_personal_linkedin:
+        if _ORG_NAME_INDICATORS_RE.search(n_clean) and not _PERSON_ROLE_RE.search(combined_context):
+            return "business"
+        return "individual"
+
     n_words = n_clean.split()
     looks_like_person_name = (
         2 <= len(n_words) <= 3
         and all(w[0].isalpha() for w in n_words if w)
         and not any(ch in n_clean for ch in ("&", ":", "|"))
+        and not any(location_matches_text(city_tok, n_clean) for city_tok in ("london", "dubai", "new york", "washington", "ahmedabad"))
     )
 
-    if is_personal_linkedin:
-        return "individual"
+    has_person_role = bool(_PERSON_ROLE_RE.search(combined_context))
+    has_handle_match = _handle_corroborates_name(n_clean, platform, profile_url)
 
-    # Google/Email custom websites without personal profile markers or person-name structure
     if platform in {"Google", "Email"}:
-        if "about.me/" in url_lower or looks_like_person_name:
+        if "about.me/" in url_lower:
+            return "individual"
+        if looks_like_person_name and (has_person_role or has_handle_match):
             return "individual"
         if len(n_words) >= 4 or any(ch in n_clean for ch in ("&", "|")):
             return "business"
         return "unknown"
 
-    # Social accounts: genuine lowercase person names (e.g. "john doe") are not marked parody;
-    # classify with role cues as "individual", otherwise leave "unknown" for relevance checks.
-    if looks_like_person_name and (
-        any(w[0].isupper() for w in n_words if w) or _PERSON_ROLE_RE.search(f"{title} {snippet}")
-    ):
+    # Social accounts: require multi-word person name PLUS personal role or handle corroboration
+    if looks_like_person_name and (has_person_role or has_handle_match):
         return "individual"
 
     return "unknown"

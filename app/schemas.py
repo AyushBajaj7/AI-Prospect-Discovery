@@ -133,7 +133,7 @@ class Prospect(BaseModel):
 
 
 class PlatformPipelineMetrics(BaseModel):
-    """Per-platform stage counts explaining exactly where hits were filtered."""
+    """Per-platform stage counts and search failure diagnostics."""
 
     search_status: SearchStatus = SearchStatus.NO_RESULTS
     search_hits: int = 0
@@ -142,8 +142,14 @@ class PlatformPipelineMetrics(BaseModel):
     missing_required_contact: int = 0
     parody_or_gimmick: int = 0
     target_type_mismatches: int = 0
+    insufficient_identity_evidence: int = 0
     below_relevance_threshold: int = 0
     retained_candidates: int = 0
+    provider: Optional[str] = None
+    http_status: Optional[int] = None
+    exception_type: Optional[str] = None
+    failure_reason: Optional[str] = None
+    retry_count: int = 0
 
 
 class ProviderHealthSummary(BaseModel):

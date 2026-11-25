@@ -111,7 +111,7 @@ class TestInputValidation:
             content="not-json",
             headers={"Content-Type": "application/json"},
         )
-        assert resp.status_code in (400, 422, 500)
+        assert resp.status_code in (400, 422)
 
     def test_valid_query_accepted(self):
         # Mock the full pipeline so we don't make real HTTP calls in CI
@@ -1301,7 +1301,8 @@ class TestP0ThroughP3Remediation:
 
         req_text = (Path(__file__).resolve().parent.parent / "requirements.txt").read_text()
         assert "anthropic>=0.77.0" in req_text
-        assert "google-genai>=1.0.0" in req_text
+        assert "google-genai>=1.60.0" in req_text
+        assert "httpx>=0.28.1" in req_text
         assert "openai>=1.50.0" in req_text
 
         assert hasattr(anthropic, "transform_schema")
@@ -1742,6 +1743,424 @@ class TestAuditRemediationAndObservability:
         expose = resp.headers.get("access-control-expose-headers", "")
         assert "X-LLM-Provider" in expose
         assert "X-Platforms-Succeeded" in expose
+
+    def test_google_excludes_social_mirrors_and_cleans_trailing_handles(self, monkeypatch):
+        from app.platforms.google import GoogleAdapter
+        from app.services.search_service import search_service
+
+        g = GoogleAdapter()
+        for mirror_url in (
+            "https://twstalker.com/Ms_Felicia_",
+            "https://nitter.net/someone",
+            "https://nitter.privacydev.net/someone",
+            "https://www.sotwe.com/handle",
+            "https://picuki.com/profile/someone",
+            "https://imginn.com/someone/",
+        ):
+            assert not g.validate_url(mirror_url), f"Expected mirror rejected: {mirror_url}"
+
+        assert clean_name("MsFelicia @Ms_Felicia_", "Google") == "MsFelicia"
+        assert clean_name("Jane Doe @janedoe", "X") == "Jane Doe"
+
+        RateLimitMiddleware.reset()
+        query_service.clear_cache()
+
+        async def mock_search(query_str: str, num_results: int = 5):
+            if "about.me" in query_str:
+                return SearchOutcome(
+                    hits=[
+                        {
+                            "title": "MsFelicia @Ms_Felicia_",
+                            "link": "https://twstalker.com/Ms_Felicia_",
+                            "snippet": "Football lover in Washington DC, USA",
+                        },
+                        {
+                            "title": "Dan Sreebny - Washington DC",
+                            "link": "https://about.me/dansreebny",
+                            "snippet": "Football lover based in Washington DC, USA.",
+                        },
+                    ],
+                    status=SearchStatus.SUCCESS,
+                    provider="ddg",
+                )
+            return SearchOutcome(hits=[], status=SearchStatus.NO_RESULTS, provider="ddg")
+
+        monkeypatch.setattr(search_service, "search_with_status", mock_search)
+        resp = client.post(
+            "/prospect-discovery",
+            json={"query": "Football lovers in Washington DC in USA"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        urls = [sl["link"] for p in body["prospects"] for sl in p["social_link"]]
+        assert not any("twstalker.com" in u for u in urls)
+        assert any("about.me/dansreebny" in u for u in urls)
+
+    def test_sample_business_names_excluded_on_individual_queries_e2e(self, monkeypatch):
+        from app.services.search_service import search_service
+
+        RateLimitMiddleware.reset()
+        query_service.clear_cache()
+
+        async def mock_london(query_str: str, num_results: int = 5):
+            if "facebook.com" in query_str:
+                return SearchOutcome(
+                    hits=[
+                        {
+                            "title": "Grow London Local | Facebook",
+                            "link": "https://www.facebook.com/GrowLondonLocal",
+                            "snippet": "Community for startup founders in London, UK.",
+                        }
+                    ],
+                    status=SearchStatus.SUCCESS,
+                    provider="ddg",
+                )
+            if "youtube.com" in query_str:
+                return SearchOutcome(
+                    hits=[
+                        {
+                            "title": "Startups of London - YouTube",
+                            "link": "https://www.youtube.com/c/startupsoflondon",
+                            "snippet": "Startup founders in London, UK.",
+                        }
+                    ],
+                    status=SearchStatus.SUCCESS,
+                    provider="ddg",
+                )
+            if "linkedin.com" in query_str:
+                return SearchOutcome(
+                    hits=[
+                        {
+                            "title": "Charlie Walker - Co-Founder | LinkedIn",
+                            "link": "https://www.linkedin.com/in/charlie-walker-846184112",
+                            "snippet": "Startup founder in London, UK.",
+                        }
+                    ],
+                    status=SearchStatus.SUCCESS,
+                    provider="ddg",
+                )
+            return SearchOutcome(hits=[], status=SearchStatus.NO_RESULTS, provider="ddg")
+
+        monkeypatch.setattr(search_service, "search_with_status", mock_london)
+        r_lon = client.post("/prospect-discovery", json={"query": "Startup founders in London UK"})
+        assert r_lon.status_code == 200
+        names_lon = [p["name"] for p in r_lon.json()["prospects"]]
+        assert names_lon == ["Charlie Walker"]
+
+        async def mock_ny(query_str: str, num_results: int = 5):
+            if "facebook.com" in query_str:
+                return SearchOutcome(
+                    hits=[
+                        {
+                            "title": "Main Street ROI | Facebook",
+                            "link": "https://www.facebook.com/MainStreetROI",
+                            "snippet": "Digital marketing agency serving small businesses in New York.",
+                        }
+                    ],
+                    status=SearchStatus.SUCCESS,
+                    provider="ddg",
+                )
+            if "about.me" in query_str:
+                return SearchOutcome(
+                    hits=[
+                        {
+                            "title": "Winston Digital Marketing",
+                            "link": "https://www.winstondigitalmarketing.com",
+                            "snippet": "Full-service digital marketing agency in New York, USA.",
+                        }
+                    ],
+                    status=SearchStatus.SUCCESS,
+                    provider="ddg",
+                )
+            if "linkedin.com" in query_str:
+                return SearchOutcome(
+                    hits=[
+                        {
+                            "title": "Steven Rank - Agency Owner | LinkedIn",
+                            "link": "https://www.linkedin.com/in/steven-rank-038b242",
+                            "snippet": "Digital marketing agency owner in New York, USA.",
+                        }
+                    ],
+                    status=SearchStatus.SUCCESS,
+                    provider="ddg",
+                )
+            return SearchOutcome(hits=[], status=SearchStatus.NO_RESULTS, provider="ddg")
+
+        RateLimitMiddleware.reset()
+        monkeypatch.setattr(search_service, "search_with_status", mock_ny)
+        r_ny = client.post(
+            "/prospect-discovery",
+            json={"query": "Digital marketing agency owners in New York USA"},
+        )
+        assert r_ny.status_code == 200
+        names_ny = [p["name"] for p in r_ny.json()["prospects"]]
+        assert names_ny == ["Steven Rank"]
+
+    def test_identity_gate_rejects_short_handles_and_unverified_unknowns(self, monkeypatch):
+        from app.services.search_service import search_service
+
+        RateLimitMiddleware.reset()
+        query_service.clear_cache()
+
+        async def mock_dubai(query_str: str, num_results: int = 5):
+            if "site:x.com" in query_str:
+                return SearchOutcome(
+                    hits=[
+                        {
+                            "title": "AJ (@TheSerbianG) / X",
+                            "link": "https://x.com/TheSerbianG",
+                            "snippet": "Restaurant owners in Dubai UAE food scene.",
+                        },
+                        {
+                            "title": "Raph (@raph_thoug) / X",
+                            "link": "https://x.com/raph_thoug",
+                            "snippet": "Restaurant owner insights in Dubai UAE.",
+                        },
+                        {
+                            "title": "Tariq Al Mansoor (@tariqalmansoor) / X",
+                            "link": "https://x.com/tariqalmansoor",
+                            "snippet": "Restaurant owner in Dubai, UAE.",
+                        },
+                    ],
+                    status=SearchStatus.SUCCESS,
+                    provider="ddg",
+                )
+            return SearchOutcome(hits=[], status=SearchStatus.NO_RESULTS, provider="ddg")
+
+        monkeypatch.setattr(search_service, "search_with_status", mock_dubai)
+        resp = client.post(
+            "/prospect-discovery?include_diagnostics=true",
+            json={"query": "Restaurant owners in Dubai UAE"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        names = [p["name"] for p in body["prospects"]]
+        assert "AJ" not in names
+        assert "Raph" not in names
+        assert names == ["Tariq Al Mansoor"]
+        assert body["provider_health"]["platform_metrics"]["X"]["insufficient_identity_evidence"] == 2
+
+    def test_generic_company_email_not_attached_to_unrelated_individuals(self, monkeypatch):
+        from app.services.search_service import search_service
+
+        RateLimitMiddleware.reset()
+        query_service.clear_cache()
+
+        async def mock_search(query_str: str, num_results: int = 5):
+            if "site:linkedin.com" in query_str:
+                return SearchOutcome(
+                    hits=[
+                        {
+                            "title": "Charlie Walker - Startup Founder | LinkedIn",
+                            "link": "https://www.linkedin.com/in/charlie-walker-846184112",
+                            "snippet": "Startup founder in London, UK. cofounder@rephrase.ai charlie@walkerventures.uk",
+                        },
+                        {
+                            "title": "Rahim Nathwani - Startup Founder | LinkedIn",
+                            "link": "https://www.linkedin.com/in/rahimnathwani",
+                            "snippet": "Startup founder in London, UK. Contact cofounder@rephrase.ai or info@acme.io",
+                        },
+                    ],
+                    status=SearchStatus.SUCCESS,
+                    provider="ddg",
+                )
+            return SearchOutcome(hits=[], status=SearchStatus.NO_RESULTS, provider="ddg")
+
+        monkeypatch.setattr(search_service, "search_with_status", mock_search)
+        resp = client.post("/prospect-discovery", json={"query": "Startup founders in London UK"})
+        assert resp.status_code == 200
+        prospects = resp.json()["prospects"]
+        assert len(prospects) == 2
+        all_links = [sl["link"] for p in prospects for sl in p["social_link"]]
+        assert "mailto:cofounder@rephrase.ai" not in all_links
+        assert "mailto:info@acme.io" not in all_links
+        assert "mailto:charlie@walkerventures.uk" in all_links
+
+    def test_local_phone_omits_social_domain_phone_context(self):
+        from app.services.profile_extractor import profile_extractor
+
+        cand_li = RawCandidate(
+            platform="LinkedIn",
+            name="Alex Morgan",
+            profile_url="https://www.linkedin.com/in/alexmorgan",
+            title="Alex Morgan",
+            snippet="Call 202-555-0199 or +44 20 7946 0991",
+        )
+        enriched_li = profile_extractor.enrich_candidate(
+            cand_li,
+            StructuredIntent(interest="Startups", audience="Startup founders"),
+        )
+        phone_links_li = [sl.link for sl in enriched_li.social_links if sl.platform == "Phone"]
+        assert phone_links_li == ["tel:+442079460991"]
+        assert not any("linkedin.com" in link for link in phone_links_li)
+
+        cand_site = RawCandidate(
+            platform="Google",
+            name="Acme Bistro",
+            profile_url="https://acmebistro.ae/contact",
+            title="Acme Bistro",
+            snippet="Call 202-555-0199",
+        )
+        enriched_site = profile_extractor.enrich_candidate(
+            cand_site,
+            StructuredIntent(interest="Restaurants", audience="Restaurants", target_type="business"),
+        )
+        assert [sl.link for sl in enriched_site.social_links if sl.platform == "Phone"] == [
+            "tel:2025550199;phone-context=acmebistro.ae"
+        ]
+
+    def test_ddg_typed_rate_limit_and_anti_bot_diagnostics(self, monkeypatch):
+        from ddgs.exceptions import DDGSException, RatelimitException, TimeoutException
+
+        svc = SearchService()
+
+        # 1. Typed RatelimitException (even with generic message text) -> RATE_LIMITED
+        class FakeDDGSRate:
+            def __init__(self, **kwargs):
+                pass
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def text(self, q, max_results=5):
+                raise RatelimitException("upstream throttle")
+
+        import ddgs
+        monkeypatch.setattr(ddgs, "DDGS", FakeDDGSRate)
+        out_rl = asyncio.run(svc._search_ddg("test query", 5))
+        assert out_rl.status == SearchStatus.RATE_LIMITED
+        assert out_rl.exception_type == "RatelimitException"
+        assert out_rl.http_status == 429
+        assert out_rl.failure_reason == "rate_limited"
+        assert out_rl.retry_count == 1
+
+        # 2. HTTP 202 anti-bot challenge -> PROVIDER_ERROR + anti_bot_or_challenge (never RATE_LIMITED)
+        class FakeDDGSBot:
+            def __init__(self, **kwargs):
+                pass
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def text(self, q, max_results=5):
+                raise DDGSException("HTTP 202 captcha challenge triggered")
+
+        monkeypatch.setattr(ddgs, "DDGS", FakeDDGSBot)
+        out_bot = asyncio.run(svc._search_ddg("test query", 5))
+        assert out_bot.status == SearchStatus.PROVIDER_ERROR
+        assert out_bot.http_status == 202
+        assert out_bot.failure_reason == "anti_bot_or_challenge"
+
+        # 3. Typed TimeoutException -> TIMEOUT
+        class FakeDDGSTimeout:
+            def __init__(self, **kwargs):
+                pass
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def text(self, q, max_results=5):
+                raise TimeoutException("timed out")
+
+        monkeypatch.setattr(ddgs, "DDGS", FakeDDGSTimeout)
+        out_to = asyncio.run(svc._search_ddg("test query", 5))
+        assert out_to.status == SearchStatus.TIMEOUT
+        assert out_to.failure_reason == "timeout"
+
+    def test_llm_targeted_retry_on_unsupported_reasoning_param_only(self, monkeypatch):
+        from types import SimpleNamespace
+        from app.config import settings
+
+        valid_intent_json = json.dumps({
+            "interest": "Startups",
+            "audience": "Startup founders",
+            "location": {"city": "London", "state": None, "country": "UK"},
+            "target_type": "individual",
+            "keywords": ["startup"],
+        })
+
+        class Param400Error(Exception):
+            def __init__(self, msg: str):
+                super().__init__(msg)
+                self.status_code = 400
+
+        # 1. OpenAI: retries once when 400 rejects reasoning_effort, succeeds without it
+        calls = []
+
+        class FakeOpenAI:
+            def __init__(self, **kwargs):
+                self.beta = SimpleNamespace(
+                    chat=SimpleNamespace(completions=SimpleNamespace(parse=self._parse))
+                )
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *args):
+                return False
+            async def _parse(self, **kwargs):
+                calls.append(kwargs)
+                if "reasoning_effort" in kwargs:
+                    raise Param400Error("Unsupported parameter: 'reasoning_effort' is not supported for this model")
+                return SimpleNamespace(
+                    choices=[SimpleNamespace(message=SimpleNamespace(
+                        parsed=StructuredIntent.model_validate_json(valid_intent_json),
+                        content=valid_intent_json,
+                    ))],
+                    usage=SimpleNamespace(prompt_tokens=90, completion_tokens=40),
+                )
+
+        import openai
+        monkeypatch.setattr(settings, "OPENAI_API_KEY", "sk-test")
+        monkeypatch.setattr(settings, "OPENAI_MODEL", "gpt-6-luna")
+        monkeypatch.setattr(openai, "AsyncOpenAI", FakeOpenAI)
+        intent = asyncio.run(llm_service._call_openai("Startup founders in London UK", 5.0))
+        assert intent.audience == "Startup founders"
+        assert len(calls) == 2
+        assert "reasoning_effort" in calls[0]
+        assert "reasoning_effort" not in calls[1]
+
+        # 2. Non-reasoning 400 (e.g. model_not_found) MUST NOT trigger single-provider retry
+        calls.clear()
+
+        class FakeOpenAIBadModel(FakeOpenAI):
+            async def _parse(self, **kwargs):
+                calls.append(kwargs)
+                raise Param400Error("The model `bad-model` does not exist (model_not_found)")
+
+        monkeypatch.setattr(openai, "AsyncOpenAI", FakeOpenAIBadModel)
+        with pytest.raises(Param400Error):
+            asyncio.run(llm_service._call_openai("Startup founders in London UK", 5.0))
+        assert len(calls) == 1
+
+    def test_confirmed_conflicting_location_rejected(self):
+        intent_dubai = StructuredIntent(
+            interest="Restaurants",
+            audience="Restaurant owners",
+            location=LocationDetails(city="Dubai", country="UAE"),
+            target_type="individual",
+        )
+        manchester_cand = RawCandidate(
+            platform="LinkedIn",
+            name="Nam Tran",
+            location="Manchester, UK",
+            profile_url="https://www.linkedin.com/in/nam-tran-7b642547",
+            title="Nam Tran - Restaurant Owner",
+            snippet="Restaurant owner in Manchester UK formerly visited Dubai.",
+            entity_type="individual",
+        )
+        dubai_cand = RawCandidate(
+            platform="LinkedIn",
+            name="Vince Farahjian",
+            location="Dubai, UAE",
+            profile_url="https://www.linkedin.com/in/vince-farahjian-ab517383",
+            title="Vince Farahjian - Restaurant Owner",
+            snippet="Restaurant owner in Dubai, UAE.",
+            entity_type="individual",
+        )
+        kept = relevance_service.filter_relevant_candidates(
+            [manchester_cand, dubai_cand], intent_dubai
+        )
+        assert [c.name for c in kept] == ["Vince Farahjian"]
+
 
 
 

@@ -13,12 +13,11 @@ from __future__ import annotations
 
 import logging
 from typing import Set
-from urllib.parse import urlparse
 
-from app.platforms.contacts import extract_all_contacts
+from app.platforms.contacts import extract_all_contacts, filter_attributed_emails
 from app.schemas import RawCandidate, SocialLink, StructuredIntent
 from app.utils.normalizers import clean_name, classify_candidate_entity, normalize_location
-from app.utils.validators import format_tel_uri
+from app.utils.validators import derive_phone_context, format_tel_uri
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +32,31 @@ class ProfileExtractor:
             candidate.name = better_name
 
         candidate.location = normalize_location(candidate.location)
-        phone_ctx = (urlparse(candidate.profile_url).hostname or "").lower() or None
+        candidate.entity_type = classify_candidate_entity(
+            candidate.name,
+            candidate.platform,
+            candidate.profile_url,
+            candidate.title,
+            candidate.snippet,
+        )
 
+        phone_ctx = derive_phone_context(candidate.profile_url, candidate.platform)
         extra = extract_all_contacts(f"{candidate.title} {candidate.snippet}")
 
-        for email in extra["emails"]:
+        candidate.emails = filter_attributed_emails(
+            candidate.emails, candidate.entity_type, candidate.profile_url
+        )
+        attributed_extra_emails = filter_attributed_emails(
+            extra["emails"], candidate.entity_type, candidate.profile_url
+        )
+        allowed_emails = set(candidate.emails) | set(attributed_extra_emails)
+        candidate.social_links = [
+            sl
+            for sl in candidate.social_links
+            if sl.platform != "Email" or sl.link.removeprefix("mailto:").lower() in allowed_emails
+        ]
+
+        for email in attributed_extra_emails:
             if email not in candidate.emails:
                 candidate.emails.append(email)
                 candidate.social_links.append(
@@ -52,14 +71,6 @@ class ProfileExtractor:
                     candidate.social_links.append(
                         SocialLink(platform="Phone", link=tel_uri)
                     )
-
-        candidate.entity_type = classify_candidate_entity(
-            candidate.name,
-            candidate.platform,
-            candidate.profile_url,
-            candidate.title,
-            candidate.snippet,
-        )
 
         for wa in extra["whatsapp_links"]:
             if wa not in candidate.whatsapp_links:

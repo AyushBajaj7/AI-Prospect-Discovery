@@ -11,10 +11,16 @@ from typing import List, Optional
 from urllib.parse import urlparse
 
 from app.platforms.base import BasePlatformAdapter
-from app.platforms.contacts import extract_all_contacts
+from app.platforms.contacts import extract_all_contacts, filter_attributed_emails
 from app.schemas import PlatformPipelineMetrics, RawCandidate, SocialLink, StructuredIntent
 from app.utils.normalizers import clean_name, classify_candidate_entity, extract_handle
-from app.utils.validators import clean_url, format_tel_uri, is_valid_profile_url, normalize_whatsapp_url
+from app.utils.validators import (
+    clean_url,
+    derive_phone_context,
+    format_tel_uri,
+    is_valid_profile_url,
+    normalize_whatsapp_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,10 +61,16 @@ class EmailAdapter(BasePlatformAdapter):
         self, intent: StructuredIntent, max_results: int = 5
     ) -> List[RawCandidate]:
         query = self.build_query(intent)
-        hits, search_status = await self._execute_search(query, max_results)
+        outcome = await self._execute_search(query, max_results)
+        hits = outcome.hits
         metrics = PlatformPipelineMetrics(
-            search_status=search_status,
+            search_status=outcome.status,
             search_hits=len(hits),
+            provider=outcome.provider,
+            http_status=outcome.http_status,
+            exception_type=outcome.exception_type,
+            failure_reason=outcome.failure_reason,
+            retry_count=outcome.retry_count,
         )
 
         candidates: List[RawCandidate] = []
@@ -79,8 +91,8 @@ class EmailAdapter(BasePlatformAdapter):
 
             combined = f"{title} {snippet}"
             contacts = extract_all_contacts(combined)
-            emails = contacts["emails"]
-            if not emails:
+            raw_emails = contacts["emails"]
+            if not raw_emails:
                 metrics.missing_required_contact += 1
                 logger.info(
                     "Platform Email rejected hit [reason=missing_public_email] url=%r",
@@ -97,8 +109,20 @@ class EmailAdapter(BasePlatformAdapter):
                 )
                 continue
 
+            entity_type = classify_candidate_entity(
+                name, source_platform, page_url, title, snippet
+            )
+            emails = filter_attributed_emails(raw_emails, entity_type, page_url)
+            if not emails:
+                metrics.missing_required_contact += 1
+                logger.info(
+                    "Platform Email rejected hit [reason=generic_company_email_unattributed] url=%r",
+                    page_url[:120],
+                )
+                continue
+
             location = self._infer_location(combined, intent)
-            phone_ctx = (urlparse(page_url).hostname or "").lower() or None
+            phone_ctx = derive_phone_context(page_url, source_platform)
             social_links: List[SocialLink] = [
                 SocialLink(platform=source_platform, link=page_url),
             ]
@@ -130,9 +154,7 @@ class EmailAdapter(BasePlatformAdapter):
                     verification_status=(
                         "url_format_validated" if source_platform != "Google" else "search_indexed_web"
                     ),
-                    entity_type=classify_candidate_entity(
-                        name, source_platform, page_url, title, snippet
-                    ),
+                    entity_type=entity_type,
                     metadata={"handle": handle},
                 )
             )

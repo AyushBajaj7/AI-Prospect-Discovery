@@ -22,6 +22,13 @@ from app.config import settings
 from app.schemas import PlatformPipelineMetrics, RawCandidate, StructuredIntent
 from app.utils.normalizers import location_matches_text
 
+_PERSONAL_ROLE_EVIDENCE_RE = re.compile(
+    r"\b(?:founder|co-?founder|ceo|cto|cfo|owner|director|manager|engineer|"
+    r"developer|designer|consultant|advisor|investor|coach|analyst|journalist|"
+    r"writer|author|entrepreneur|lover|enthusiast|fan)\b",
+    re.IGNORECASE,
+)
+
 logger = logging.getLogger(__name__)
 
 # Semantic synonyms used for audience-match scoring when exact keywords miss
@@ -152,6 +159,49 @@ class RelevanceService:
         total = sum(breakdown.values())
         return total, breakdown
 
+    @staticmethod
+    def _passes_identity_gate(
+        cand: RawCandidate,
+        intent: StructuredIntent,
+        breakdown: Dict[str, float],
+    ) -> bool:
+        """
+        Separate identity-evidence gate preventing unverified short handles (e.g. 'AJ',
+        'Raph') or ambiguous 'unknown' entities from passing solely on topical score.
+        """
+        alpha_only = re.sub(r"[^A-Za-z]", "", cand.name or "")
+        name_words = [w for w in (cand.name or "").split() if any(ch.isalpha() for ch in w)]
+        has_confirmed_location = bool(cand.location) or breakdown.get("location_match", 0.0) >= 15.0
+        has_contact = bool(cand.emails or cand.phones or cand.whatsapp_links)
+        is_linkedin_profile = cand.platform == "LinkedIn" and "/in/" in cand.profile_url.lower()
+
+        if len(alpha_only) < 4:
+            return False
+
+        if intent.target_type == "individual":
+            if cand.entity_type == "individual":
+                # Confirmed individual: require >=2 words unless LinkedIn /in/ or verified loc+contact
+                if len(name_words) >= 2 or is_linkedin_profile:
+                    return True
+                return has_confirmed_location and has_contact
+            # "unknown" entity on individual-target query requires stronger corroboration
+            if len(name_words) >= 2 and (has_confirmed_location or has_contact):
+                return True
+            if (
+                len(name_words) >= 2
+                and _PERSONAL_ROLE_EVIDENCE_RE.search(f"{cand.title} {cand.snippet}")
+                and all(len(re.sub(r"[^A-Za-z]", "", w)) >= 2 for w in name_words)
+            ):
+                return True
+            return False
+
+        # target_type == "business"
+        if cand.entity_type == "business":
+            return len(alpha_only) >= 4
+        return (len(name_words) >= 2 or len(alpha_only) >= 5) and (
+            has_confirmed_location or has_contact
+        )
+
     def filter_relevant_candidates(
         self,
         candidates: List[RawCandidate],
@@ -173,8 +223,8 @@ class RelevanceService:
                 )
                 continue
 
-            # Enforce intent.target_type for confirmed mismatches while allowing
-            # genuinely ambiguous ("unknown") candidates to be judged by relevance score.
+            # Enforce intent.target_type for confirmed mismatches while judging
+            # ambiguous ("unknown") candidates with the stricter identity-evidence gate.
             if intent.target_type == "individual" and cand.entity_type == "business":
                 if m is not None:
                     m.target_type_mismatches += 1
@@ -197,6 +247,35 @@ class RelevanceService:
             score, breakdown = self.evaluate_candidate(cand, intent)
             cand.relevance_score = score
             cand.metadata["score_breakdown"] = breakdown
+
+            if cand.location and (intent.location.city or intent.location.country):
+                from app.services.deduplication_service import deduplication_service
+
+                if not deduplication_service._locations_compatible(
+                    cand.location, intent.location.formatted()
+                ):
+                    if m is not None:
+                        m.below_relevance_threshold += 1
+                    logger.info(
+                        "Platform %s rejected '%s' [reason=location_mismatch cand=%r query=%r]",
+                        cand.platform,
+                        cand.name,
+                        cand.location,
+                        intent.location.formatted(),
+                    )
+                    continue
+
+            if not self._passes_identity_gate(cand, intent, breakdown):
+                if m is not None:
+                    m.insufficient_identity_evidence += 1
+                logger.info(
+                    "Platform %s rejected '%s' [reason=insufficient_identity_evidence entity=%s]",
+                    cand.platform,
+                    cand.name,
+                    cand.entity_type,
+                )
+                continue
+
             if score >= settings.RELEVANCE_THRESHOLD:
                 if m is not None:
                     m.retained_candidates += 1

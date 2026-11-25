@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from typing import List, Optional, Tuple
 from urllib.parse import urlparse
 
-from app.platforms.contacts import extract_all_contacts
+from app.platforms.contacts import extract_all_contacts, filter_attributed_emails
 from app.schemas import (
     PlatformPipelineMetrics,
     RawCandidate,
@@ -23,7 +23,7 @@ from app.schemas import (
     SocialLink,
     StructuredIntent,
 )
-from app.services.search_service import SearchHit, SearchService, search_service
+from app.services.search_service import SearchHit, SearchOutcome, SearchService, search_service
 from app.utils.normalizers import (
     LOCATION_ALIASES,
     clean_name,
@@ -35,6 +35,7 @@ from app.utils.normalizers import (
 from app.utils.validators import (
     PLATFORM_PATTERNS,
     clean_url,
+    derive_phone_context,
     format_tel_uri,
     is_valid_profile_url,
     normalize_whatsapp_url,
@@ -114,26 +115,37 @@ class BasePlatformAdapter(ABC):
 
     async def _execute_search(
         self, query: str, max_results: int
-    ) -> Tuple[List[SearchHit], SearchStatus]:
+    ) -> SearchOutcome:
         """
-        Execute web search via `search_service` and classify the outcome while
-        remaining compatible with tests that monkeypatch `search_service.search`.
+        Execute web search via `search_service` and return the full `SearchOutcome`
+        while remaining compatible with tests that monkeypatch `search_service.search`.
         """
         try:
             if getattr(search_service.search, "__func__", None) is not SearchService.search:
                 hits = await search_service.search(query, num_results=max_results)
                 status = SearchStatus.SUCCESS if hits else SearchStatus.NO_RESULTS
-                return hits, status
-            outcome = await search_service.search_with_status(query, num_results=max_results)
-            return outcome.hits, outcome.status
-        except (TimeoutError, asyncio.TimeoutError):
+                return SearchOutcome(hits=hits, status=status, provider="mocked")
+            return await search_service.search_with_status(query, num_results=max_results)
+        except (TimeoutError, asyncio.TimeoutError) as exc:
             logger.warning("Search timed out on platform %s", self.platform_name)
-            return [], SearchStatus.TIMEOUT
+            return SearchOutcome(
+                hits=[],
+                status=SearchStatus.TIMEOUT,
+                provider="unknown",
+                exception_type=type(exc).__name__,
+                failure_reason="timeout",
+            )
         except Exception as exc:
             logger.warning(
                 "Search failed on platform %s: %s", self.platform_name, type(exc).__name__
             )
-            return [], SearchStatus.PROVIDER_ERROR
+            return SearchOutcome(
+                hits=[],
+                status=SearchStatus.PROVIDER_ERROR,
+                provider="unknown",
+                exception_type=type(exc).__name__,
+                failure_reason=type(exc).__name__,
+            )
 
     @staticmethod
     def _record_metrics(platform_name: str, metrics: PlatformPipelineMetrics) -> None:
@@ -199,10 +211,16 @@ class BasePlatformAdapter(ABC):
         self, intent: StructuredIntent, max_results: int = 5
     ) -> List[RawCandidate]:
         query = self.build_query(intent)
-        hits, search_status = await self._execute_search(query, max_results)
+        outcome = await self._execute_search(query, max_results)
+        hits = outcome.hits
         metrics = PlatformPipelineMetrics(
-            search_status=search_status,
+            search_status=outcome.status,
             search_hits=len(hits),
+            provider=outcome.provider,
+            http_status=outcome.http_status,
+            exception_type=outcome.exception_type,
+            failure_reason=outcome.failure_reason,
+            retry_count=outcome.retry_count,
         )
 
         candidates: List[RawCandidate] = []
@@ -235,13 +253,19 @@ class BasePlatformAdapter(ABC):
 
             combined_text = f"{title} {snippet}"
             location = self._infer_location(combined_text, intent)
+            entity_type = classify_candidate_entity(
+                name, self.platform_name, profile_url, title, snippet
+            )
             contacts = extract_all_contacts(combined_text)
-            phone_ctx = (urlparse(profile_url).hostname or "").lower() or None
+            attributed_emails = filter_attributed_emails(
+                contacts["emails"], entity_type, profile_url
+            )
+            phone_ctx = derive_phone_context(profile_url, self.platform_name)
 
             social_links: List[SocialLink] = [
                 SocialLink(platform=self.platform_name, link=profile_url)
             ]
-            for email in contacts["emails"]:
+            for email in attributed_emails:
                 social_links.append(SocialLink(platform="Email", link=f"mailto:{email}"))
             for phone in contacts["phones"]:
                 tel_uri = format_tel_uri(phone, phone_context=phone_ctx)
@@ -253,9 +277,6 @@ class BasePlatformAdapter(ABC):
                     social_links.append(SocialLink(platform="WhatsApp", link=wa_norm))
 
             handle = extract_handle(profile_url, self.platform_name)
-            entity_type = classify_candidate_entity(
-                name, self.platform_name, profile_url, title, snippet
-            )
 
             candidates.append(
                 RawCandidate(
@@ -265,7 +286,7 @@ class BasePlatformAdapter(ABC):
                     profile_url=profile_url,
                     title=title,
                     snippet=snippet,
-                    emails=contacts["emails"],
+                    emails=attributed_emails,
                     phones=contacts["phones"],
                     whatsapp_links=contacts["whatsapp_links"],
                     social_links=social_links,
