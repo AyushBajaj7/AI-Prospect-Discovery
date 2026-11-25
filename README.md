@@ -331,7 +331,7 @@ python scripts/smoke_test.py
 
 ## 11. Automated Testing & CI Matrix
 
-The test suite contains **160 automated unit and integration tests** in `tests/test_prospect_discovery.py` and runs automatically across Python `3.10`, `3.11`, `3.12`, `3.13`, and `3.14` plus a `minimum-deps` compatibility job pinning declared minimum package bounds (`google-genai==1.60.0`, `httpx==0.28.1`, `anthropic==0.77.0`, `openai==1.50.0`) in [`.github/workflows/ci.yml`](.github/workflows/ci.yml):
+The test suite contains **160 automated unit and integration tests** in `tests/test_prospect_discovery.py` and runs automatically across Python `3.10`, `3.11`, `3.12`, `3.13`, and `3.14` plus a `minimum-deps` compatibility job pinning declared minimum package bounds (`google-genai==1.60.0`, `httpx==0.28.1`, `anthropic==0.77.0`, `openai==1.58.0`, `fastapi==0.115.6`) in [`.github/workflows/ci.yml`](.github/workflows/ci.yml):
 
 ```bash
 pytest tests/ -v

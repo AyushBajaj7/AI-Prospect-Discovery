@@ -1303,7 +1303,7 @@ class TestP0ThroughP3Remediation:
         assert "anthropic>=0.77.0" in req_text
         assert "google-genai>=1.60.0" in req_text
         assert "httpx>=0.28.1" in req_text
-        assert "openai>=1.50.0" in req_text
+        assert "openai>=1.58.0" in req_text
 
         assert hasattr(anthropic, "transform_schema")
         transformed = anthropic.transform_schema(StructuredIntent)
