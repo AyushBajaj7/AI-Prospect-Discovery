@@ -4,7 +4,7 @@
 [![Python Versions](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg)](.github/workflows/ci.yml)
 [![Framework](https://img.shields.io/badge/Framework-FastAPI-green.svg)](https://fastapi.tiangolo.com/)
 [![Validation](https://img.shields.io/badge/Validation-Pydantic%20v2-orange.svg)](https://docs.pydantic.dev/)
-[![Tests](https://img.shields.io/badge/Tests-160%20Passing-brightgreen.svg)](tests/test_prospect_discovery.py)
+[![Tests](https://img.shields.io/badge/Tests-162%20Passing-brightgreen.svg)](tests/test_prospect_discovery.py)
 [![License](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)
 
 An intelligent, modular prospect discovery engine built with **FastAPI**, **Pydantic v2**, and modern structured-output **LLM SDKs** (`google-genai`, `openai`, `anthropic`). It accepts natural-language queries, parses structured intent with multi-provider fallback, discovers publicly accessible profiles across **9 discovery platforms**, normalizes and validates public contact channels (`Email`, `Phone`, `WhatsApp`), filters strictly by weighted relevance, deduplicates across platforms, and returns strict assessment JSON (`success`, `query`, `total_prospects`, `prospects`) with telemetry in CORS-exposed `X-*` HTTP headers by default (and full `provider_health` + per-platform `platform_metrics` funnel diagnostics via `?include_diagnostics=true`).
@@ -141,7 +141,7 @@ Content-Type: application/json
 | **CORS & Error Sanitization** | CORS uses an explicit `CORS_ORIGINS` allowlist (`allow_credentials=False`). Exception handlers return sanitized messages correlated via `X-Request-ID`. |
 | **Host Validation & SSRF Posture** | The engine never fetches untrusted candidate profile URLs over HTTP (only fixed upstream Serper/Brave/DDG endpoints are contacted). Additionally, `is_valid_profile_url()` blocks private/loopback/link-local IPv4 and IPv6 literals (`127.0.0.1`, `[::1]`, `[fe80::1]`, `[fc00::1]`). *(If external profile-page fetching is added later, DNS resolution, rebinding checks, and redirect revalidation must be added.)* |
 | **ReDoS & Bounded Scanning** | Contact regexes avoid nested unbounded quantifiers and cap input text scanning to 10,000 characters (`_MAX_SCAN_CHARS`). |
-| **Contact & Verification Honesty** | Social URLs are labeled `url_format_validated` (or `search_indexed_web` for general web hits), not live-verified ownership. Emails reject bogus domains (`example.com`, `test.com`); phones normalize to RFC 3966 `tel:` URIs without spaces and reject date/year ranges (`2020-2025`); WhatsApp links strip `+` (`https://wa.me/<digits>`); locations remain `null` unless confirmed in text. |
+| **Contact & Verification Honesty** | Social URLs are labeled `url_format_validated` (or `search_indexed_web` for general web hits), not live-verified ownership. Emails reject bogus domains (`example.com`, `test.com`); generic role emails are filtered from individual prospects; phones normalize to RFC 3966 `tel:` URIs without spaces and reject date/year ranges (`2020-2025`); WhatsApp links strip `+` (`https://wa.me/<digits>`); locations record only verified components confirmed in text and omit the optional `location` field when unavailable (`response_model_exclude_none=True`). |
 
 ---
 
@@ -167,7 +167,7 @@ Before scoring, candidate entities are classified as `individual`, `business`, `
 
 ### A. LLM Model Comparison & Selection
 
-Models using retired/deprecated SDKs or IDs (`google-generativeai`, `gpt-4o-mini`, `claude-3-5-haiku-20241022`, and `gemini-2.5-flash` scheduled to route to Gemini 3.5 Flash-Lite on Dec 1, 2026) were replaced with current native structured-output SDKs and minimum supported versions (`openai>=1.50.0`, `google-genai>=1.0.0`, `anthropic>=0.77.0`):
+Models using retired/deprecated SDKs or IDs (`google-generativeai`, `gpt-4o-mini`, `claude-3-5-haiku-20241022`, and `gemini-2.5-flash` scheduled to route to Gemini 3.5 Flash-Lite on Dec 1, 2026) were replaced with current native structured-output SDKs and minimum supported versions (`openai>=1.58.0`, `google-genai>=1.60.0`, `anthropic>=0.77.0`):
 
 | Evaluation Criteria | OpenAI `gpt-6-luna` | Anthropic `claude-haiku-5-5` | Google `gemini-3.1-flash-lite` | Google `gemini-3.5-flash-lite` |
 |---|:---:|:---:|:---:|:---:|
@@ -221,21 +221,21 @@ Rule: `target_type` is `"individual"` whenever the query targets human roles (fo
 
 ### B. Real Captured Outputs Across All 5 Queries (`TestClient` Live Run)
 
-Executed live via `POST /prospect-discovery?include_diagnostics=true` using DuckDuckGo fallback (zero paid API keys). Every record, `total_prospects`, `request_id`, and `platform_metrics` summary below is captured from the **exact same HTTP response** (and verified on default `/` for exact keys `["prospects", "query", "success", "total_prospects"]`) in [`samples/mandatory_queries_results.json`](samples/mandatory_queries_results.json):
+Executed live via `POST /prospect-discovery?include_diagnostics=true` using DuckDuckGo fallback (zero paid API keys). Every record, `total_prospects`, `request_id`, and `platform_metrics` summary below comes from the **exact same HTTP response** (and default `POST /prospect-discovery` was verified for strict keys `["prospects", "query", "success", "total_prospects"]`) in [`samples/mandatory_queries_results.json`](samples/mandatory_queries_results.json):
 
-1. **`Football lovers in Washington DC in USA`** -> `total_prospects: 5` (`retained=5`; `7` platforms `SUCCESS`, `1` `TIMEOUT`, `1` `PROVIDER_ERROR`; across `LinkedIn` and `YouTube`: `Dan Sreebny`, `Basil Mokhallalati`, `Katie Green`, `Alejandro Heredia`, `Dc Gridiron`).
-2. **`Digital marketing agency owners in New York USA`** -> `total_prospects: 5` (`retained=5`; `6` platforms `SUCCESS`, `1` `TIMEOUT`, `2` `PROVIDER_ERROR`; across `LinkedIn`: `Marc Blanchard`, `Bill Decker`, `Erfan Azimi`, `Seb Weller`, `Ashley Casiano`).
-3. **`Startup founders in London UK`** -> `total_prospects: 2` (`retained=2`; `6` platforms `SUCCESS`, `2` `TIMEOUT`, `1` `PROVIDER_ERROR`; across `X`: `Miguel Carranza`, `Henning Sanden`).
-4. **`Cricket lovers in Ahmedabad India`** -> `total_prospects: 1` (`retained=1`; `5` platforms `SUCCESS`, `2` `TIMEOUT`, `2` `PROVIDER_ERROR`; on `X`: `amit kumar`).
-5. **`Restaurant owners in Dubai UAE`** -> `total_prospects: 4` (`retained=4`; `8` platforms `SUCCESS`, `1` `PROVIDER_ERROR`; across `LinkedIn` and `Facebook`: `Samer Mustaklim`, `Vince Farahjian`, `Mr Chef Subra`, `Mitul Pandya`).
+1. **`Football lovers in Washington DC in USA`** -> `total_prospects: 4` (`retained=4`; `8` platforms `SUCCESS`, `1` `NO_RESULTS`; `Dan Sreebny`, `Basil Mokhallalati`, `Katie Green`, `Bentarto Budisetiawan` on `LinkedIn`, all verified `"Washington DC, District of Columbia"`).
+2. **`Digital marketing agency owners in New York USA`** -> `total_prospects: 1` (`retained=1`; `6` platforms `SUCCESS`, `3` `NO_RESULTS`; `Neil Patel` on `X`, verified `"New York, New York"`).
+3. **`Startup founders in London UK`** -> `total_prospects: 4` (`retained=4`; `7` platforms `SUCCESS`, `2` `NO_RESULTS`; `Charlie Walker`, `Rahim Nathwani`, `Peter Elstrom`, `Yashvardhan Rana` on `LinkedIn`, all verified `"London, UK"` / `"London"`).
+4. **`Cricket lovers in Ahmedabad India`** -> `total_prospects: 4` (`retained=4`; `6` platforms `SUCCESS`, `3` `NO_RESULTS`; `Abhishek Raj`, `Dr.Rupesh Vala`, `Jigar Jokhakar`, `Dhruvesh Patel` on `LinkedIn`, all verified `"Ahmedabad"`).
+5. **`Restaurant owners in Dubai UAE`** -> `total_prospects: 3` (`retained=3`; `8` platforms `SUCCESS`, `1` `NO_RESULTS`; `Mohamed Al Fayed` and `Vince Farahjian` on `LinkedIn` + `Mr Chef Subra` on `Facebook`, all verified `"Dubai, UAE"` / `"Dubai"`).
 
-Sample excerpt from the captured strict JSON (`Football lovers in Washington DC in USA`, showing component-verified locations without unconfirmed country fabrication and zero excluded mirror/agency noise):
+Complete strict JSON captured for Query 1 (`Football lovers in Washington DC in USA`, showing exact `total_prospects == len(prospects) == 4` and component-verified locations):
 
 ```json
 {
   "success": true,
   "query": "Football lovers in Washington DC in USA",
-  "total_prospects": 5,
+  "total_prospects": 4,
   "prospects": [
     {
       "name": "Dan Sreebny",
@@ -252,22 +252,24 @@ Sample excerpt from the captured strict JSON (`Football lovers in Washington DC 
       ]
     },
     {
-      "name": "Alejandro Heredia",
+      "name": "Katie Green",
+      "location": "Washington DC, District of Columbia",
       "social_link": [
-        { "platform": "LinkedIn", "link": "https://www.linkedin.com/in/alejandro-herediasa" }
+        { "platform": "LinkedIn", "link": "https://www.linkedin.com/in/katie-green-3b345119" }
       ]
     },
     {
-      "name": "Dc Gridiron",
+      "name": "Bentarto Budisetiawan",
+      "location": "Washington DC, District of Columbia",
       "social_link": [
-        { "platform": "YouTube", "link": "https://www.youtube.com/@dcgridiron" }
+        { "platform": "LinkedIn", "link": "https://www.linkedin.com/in/bentarto-budisetiawan-97982518" }
       ]
     }
   ]
 }
 ```
 
-Full unmodified single-response JSON payloads, diagnostic failure counters, and exact candidate-to-prospect reconciliation for all 5 queries are saved in [`samples/mandatory_queries_results.json`](samples/mandatory_queries_results.json).
+Full unmodified single-response JSON payloads, diagnostic failure counters (`location_unverified`, `insufficient_identity_evidence`, `target_type_mismatches`, `invalid_urls`), and exact candidate-to-prospect reconciliation for all 5 queries are saved in [`samples/mandatory_queries_results.json`](samples/mandatory_queries_results.json).
 
 ---
 
@@ -331,7 +333,7 @@ python scripts/smoke_test.py
 
 ## 11. Automated Testing & CI Matrix
 
-The test suite contains **160 automated unit and integration tests** in `tests/test_prospect_discovery.py` and runs automatically across Python `3.10`, `3.11`, `3.12`, `3.13`, and `3.14` plus a `minimum-deps` compatibility job pinning declared minimum package bounds (`google-genai==1.60.0`, `httpx==0.28.1`, `anthropic==0.77.0`, `openai==1.58.0`, `fastapi==0.115.6`) in [`.github/workflows/ci.yml`](.github/workflows/ci.yml):
+The test suite contains **162 automated unit and integration tests** in `tests/test_prospect_discovery.py` and runs automatically alongside `bandit -r app/ -ll` across Python `3.10`, `3.11`, `3.12`, `3.13`, and `3.14` plus a `minimum-deps` compatibility job pinning declared minimum package bounds (`google-genai==1.60.0`, `httpx==0.28.1`, `anthropic==0.77.0`, `openai==1.58.0`, `fastapi==0.115.6`) in [`.github/workflows/ci.yml`](.github/workflows/ci.yml):
 
 ```bash
 pytest tests/ -v
@@ -360,4 +362,4 @@ For Render / Railway / Cloud Run: point start command to `uvicorn app.main:app -
 - [x] **Modern LLM SDKs & Fallback**: `openai`, `google-genai`, `anthropic` (`output_config.format`), chaining sequentially before heuristics.
 - [x] **Security Hardening**: Operator-injection sanitization, `429` rate limiter, 64 KB body cap, IPv4/IPv6 checks, non-root Docker, clean Git history.
 - [x] **Result Accuracy**: Strict relevance filtering, conflict-safe deduplication, evidence-only locations, official WhatsApp URL normalization.
-- [x] **Test Coverage & CI**: **160/160** tests passing locally + GitHub Actions matrix (`3.10`, `3.11`, `3.12`, `3.13`, `3.14`) and `minimum-deps` job.
+- [x] **Test Coverage & CI**: **162/162** tests passing locally + `bandit -r app/ -ll` clean + GitHub Actions matrix (`3.10`–`3.14`) and `minimum-deps` job.

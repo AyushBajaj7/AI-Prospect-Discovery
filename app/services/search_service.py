@@ -397,7 +397,13 @@ class SearchService:
         if "timeout" in exc_name or "timeout" in exc_str or isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
             return SearchStatus.TIMEOUT, http_status, "timeout"
 
-        if "ratelimit" in exc_name or http_status == 429 or "429" in exc_str or "rate limit" in exc_str:
+        if (
+            "ratelimit" in exc_name
+            or http_status == 429
+            or "429" in exc_str
+            or "rate limit" in exc_str
+            or "too many requests" in exc_str
+        ):
             return SearchStatus.RATE_LIMITED, http_status or 429, "rate_limited"
 
         if any(tok in exc_str for tok in ("captcha", "challenge", "bot", "202", "403", "forbidden")):

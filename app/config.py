@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # Server & Security
     # ------------------------------------------------------------------ #
     PORT: int = Field(default=4000, ge=1, le=65535)
-    HOST: str = "0.0.0.0"
+    HOST: str = "127.0.0.1"
     DEBUG: bool = False
 
     # Allowed CORS origins – explicit origins only (never wildcard with credentials).

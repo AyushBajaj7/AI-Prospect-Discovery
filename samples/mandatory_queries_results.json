@@ -2,20 +2,20 @@
   {
     "query": "Football lovers in Washington DC in USA",
     "http_status": 200,
-    "request_id": "75c6ad86-9597-474f-905d-ffbe8f542a5e",
+    "request_id": "0821f750-1a23-4158-827b-10d2879503d6",
     "telemetry_headers": {
       "x-llm-provider": "heuristic_fallback",
-      "x-platforms-succeeded": "7",
-      "x-platforms-no-results": "0",
-      "x-platforms-failed": "2",
+      "x-platforms-succeeded": "8",
+      "x-platforms-no-results": "1",
+      "x-platforms-failed": "0",
       "x-ratelimit-limit": "30",
       "x-ratelimit-remaining": "29",
-      "x-request-id": "75c6ad86-9597-474f-905d-ffbe8f542a5e"
+      "x-request-id": "0821f750-1a23-4158-827b-10d2879503d6"
     },
     "strict_response": {
       "success": true,
       "query": "Football lovers in Washington DC in USA",
-      "total_prospects": 5,
+      "total_prospects": 4,
       "prospects": [
         {
           "name": "Dan Sreebny",
@@ -48,20 +48,12 @@
           ]
         },
         {
-          "name": "Alejandro Heredia",
+          "name": "Bentarto Budisetiawan",
+          "location": "Washington DC, District of Columbia",
           "social_link": [
             {
               "platform": "LinkedIn",
-              "link": "https://www.linkedin.com/in/alejandro-herediasa"
-            }
-          ]
-        },
-        {
-          "name": "Dc Gridiron",
-          "social_link": [
-            {
-              "platform": "YouTube",
-              "link": "https://www.youtube.com/@dcgridiron"
+              "link": "https://www.linkedin.com/in/bentarto-budisetiawan-97982518"
             }
           ]
         }
@@ -69,37 +61,23 @@
     },
     "provider_health": {
       "llm_provider": "heuristic_fallback",
-      "platforms_succeeded": 7,
-      "platforms_no_results": 0,
+      "platforms_succeeded": 8,
+      "platforms_no_results": 1,
       "platforms_rate_limited": 0,
-      "platforms_timed_out": 1,
-      "platforms_errored": 1,
+      "platforms_timed_out": 0,
+      "platforms_errored": 0,
       "platform_outcomes": {
-        "YouTube": "SUCCESS",
         "Instagram": "SUCCESS",
-        "Facebook": "SUCCESS",
+        "X": "SUCCESS",
+        "YouTube": "SUCCESS",
         "LinkedIn": "SUCCESS",
-        "X": "TIMEOUT",
-        "Email": "SUCCESS",
         "WhatsApp": "SUCCESS",
+        "Email": "SUCCESS",
         "Google": "SUCCESS",
-        "Threads": "PROVIDER_ERROR"
+        "Threads": "NO_RESULTS",
+        "Facebook": "SUCCESS"
       },
       "platform_metrics": {
-        "YouTube": {
-          "search_status": "SUCCESS",
-          "search_hits": 5,
-          "invalid_urls": 4,
-          "rejected_names": 0,
-          "missing_required_contact": 0,
-          "parody_or_gimmick": 0,
-          "target_type_mismatches": 0,
-          "insufficient_identity_evidence": 0,
-          "below_relevance_threshold": 0,
-          "retained_candidates": 1,
-          "provider": "ddg",
-          "retry_count": 0
-        },
         "Instagram": {
           "search_status": "SUCCESS",
           "search_hits": 1,
@@ -108,13 +86,29 @@
           "missing_required_contact": 0,
           "parody_or_gimmick": 0,
           "target_type_mismatches": 0,
+          "location_unverified": 0,
           "insufficient_identity_evidence": 0,
           "below_relevance_threshold": 0,
           "retained_candidates": 0,
           "provider": "ddg",
           "retry_count": 0
         },
-        "Facebook": {
+        "X": {
+          "search_status": "SUCCESS",
+          "search_hits": 2,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "location_unverified": 2,
+          "insufficient_identity_evidence": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0,
+          "provider": "ddg",
+          "retry_count": 0
+        },
+        "YouTube": {
           "search_status": "SUCCESS",
           "search_hits": 5,
           "invalid_urls": 5,
@@ -122,6 +116,7 @@
           "missing_required_contact": 0,
           "parody_or_gimmick": 0,
           "target_type_mismatches": 0,
+          "location_unverified": 0,
           "insufficient_identity_evidence": 0,
           "below_relevance_threshold": 0,
           "retained_candidates": 0,
@@ -136,41 +131,12 @@
           "missing_required_contact": 0,
           "parody_or_gimmick": 0,
           "target_type_mismatches": 0,
+          "location_unverified": 1,
           "insufficient_identity_evidence": 0,
-          "below_relevance_threshold": 1,
+          "below_relevance_threshold": 0,
           "retained_candidates": 4,
           "provider": "ddg",
           "retry_count": 1
-        },
-        "X": {
-          "search_status": "TIMEOUT",
-          "search_hits": 0,
-          "invalid_urls": 0,
-          "rejected_names": 0,
-          "missing_required_contact": 0,
-          "parody_or_gimmick": 0,
-          "target_type_mismatches": 0,
-          "insufficient_identity_evidence": 0,
-          "below_relevance_threshold": 0,
-          "retained_candidates": 0,
-          "provider": "ddg",
-          "exception_type": "TimeoutException",
-          "failure_reason": "timeout",
-          "retry_count": 1
-        },
-        "Email": {
-          "search_status": "SUCCESS",
-          "search_hits": 5,
-          "invalid_urls": 1,
-          "rejected_names": 0,
-          "missing_required_contact": 4,
-          "parody_or_gimmick": 0,
-          "target_type_mismatches": 0,
-          "insufficient_identity_evidence": 0,
-          "below_relevance_threshold": 0,
-          "retained_candidates": 0,
-          "provider": "ddg",
-          "retry_count": 0
         },
         "WhatsApp": {
           "search_status": "SUCCESS",
@@ -180,20 +146,37 @@
           "missing_required_contact": 5,
           "parody_or_gimmick": 0,
           "target_type_mismatches": 0,
+          "location_unverified": 0,
           "insufficient_identity_evidence": 0,
           "below_relevance_threshold": 0,
           "retained_candidates": 0,
           "provider": "ddg",
-          "retry_count": 1
+          "retry_count": 0
+        },
+        "Email": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 1,
+          "rejected_names": 0,
+          "missing_required_contact": 4,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "location_unverified": 0,
+          "insufficient_identity_evidence": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0,
+          "provider": "ddg",
+          "retry_count": 0
         },
         "Google": {
           "search_status": "SUCCESS",
           "search_hits": 5,
-          "invalid_urls": 2,
+          "invalid_urls": 1,
           "rejected_names": 1,
           "missing_required_contact": 0,
           "parody_or_gimmick": 0,
-          "target_type_mismatches": 2,
+          "target_type_mismatches": 3,
+          "location_unverified": 0,
           "insufficient_identity_evidence": 0,
           "below_relevance_threshold": 0,
           "retained_candidates": 0,
@@ -201,27 +184,43 @@
           "retry_count": 0
         },
         "Threads": {
-          "search_status": "PROVIDER_ERROR",
+          "search_status": "NO_RESULTS",
           "search_hits": 0,
           "invalid_urls": 0,
           "rejected_names": 0,
           "missing_required_contact": 0,
           "parody_or_gimmick": 0,
           "target_type_mismatches": 0,
+          "location_unverified": 0,
           "insufficient_identity_evidence": 0,
           "below_relevance_threshold": 0,
           "retained_candidates": 0,
           "provider": "ddg",
           "exception_type": "DDGSException",
-          "failure_reason": "ddgs_error",
+          "failure_reason": "no_results_exception",
+          "retry_count": 1
+        },
+        "Facebook": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 5,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "location_unverified": 0,
+          "insufficient_identity_evidence": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0,
+          "provider": "ddg",
           "retry_count": 1
         }
       }
     },
     "reconciliation": {
-      "sum_retained_candidates": 5,
-      "total_prospects_after_dedup": 5,
-      "social_profile_links_in_response": 5
+      "sum_retained_candidates": 4,
+      "total_prospects_after_dedup": 4,
+      "social_profile_links_in_response": 4
     },
     "default_endpoint_keys_verified": [
       "prospects",
@@ -233,68 +232,28 @@
   {
     "query": "Digital marketing agency owners in New York USA",
     "http_status": 200,
-    "request_id": "b6594f02-3150-4ef9-abf2-eb738a827e9d",
+    "request_id": "56986d8a-b9e0-4909-af93-d5b29322034f",
     "telemetry_headers": {
       "x-llm-provider": "heuristic_fallback",
       "x-platforms-succeeded": "6",
-      "x-platforms-no-results": "0",
-      "x-platforms-failed": "3",
+      "x-platforms-no-results": "3",
+      "x-platforms-failed": "0",
       "x-ratelimit-limit": "30",
       "x-ratelimit-remaining": "29",
-      "x-request-id": "b6594f02-3150-4ef9-abf2-eb738a827e9d"
+      "x-request-id": "56986d8a-b9e0-4909-af93-d5b29322034f"
     },
     "strict_response": {
       "success": true,
       "query": "Digital marketing agency owners in New York USA",
-      "total_prospects": 5,
+      "total_prospects": 1,
       "prospects": [
         {
-          "name": "Marc Blanchard",
-          "location": "New York, New York, USA",
+          "name": "Neil Patel",
+          "location": "New York, New York",
           "social_link": [
             {
-              "platform": "LinkedIn",
-              "link": "https://www.linkedin.com/in/marcblanchard0"
-            }
-          ]
-        },
-        {
-          "name": "Bill Decker",
-          "location": "New York, New York, USA",
-          "social_link": [
-            {
-              "platform": "LinkedIn",
-              "link": "https://www.linkedin.com/in/billdecker"
-            }
-          ]
-        },
-        {
-          "name": "Erfan Azimi",
-          "location": "New York, New York, USA",
-          "social_link": [
-            {
-              "platform": "LinkedIn",
-              "link": "https://www.linkedin.com/in/erfanazimi"
-            }
-          ]
-        },
-        {
-          "name": "Seb Weller",
-          "location": "New York, New York, USA",
-          "social_link": [
-            {
-              "platform": "LinkedIn",
-              "link": "https://www.linkedin.com/in/sebweller"
-            }
-          ]
-        },
-        {
-          "name": "Ashley Casiano",
-          "location": "New York, New York, USA",
-          "social_link": [
-            {
-              "platform": "LinkedIn",
-              "link": "https://www.linkedin.com/in/ashleycasiano"
+              "platform": "X",
+              "link": "https://x.com/neilpatel"
             }
           ]
         }
@@ -303,20 +262,20 @@
     "provider_health": {
       "llm_provider": "heuristic_fallback",
       "platforms_succeeded": 6,
-      "platforms_no_results": 0,
+      "platforms_no_results": 3,
       "platforms_rate_limited": 0,
-      "platforms_timed_out": 1,
-      "platforms_errored": 2,
+      "platforms_timed_out": 0,
+      "platforms_errored": 0,
       "platform_outcomes": {
         "YouTube": "SUCCESS",
+        "X": "SUCCESS",
         "Facebook": "SUCCESS",
-        "X": "TIMEOUT",
-        "LinkedIn": "SUCCESS",
-        "Instagram": "PROVIDER_ERROR",
-        "Email": "SUCCESS",
         "Threads": "SUCCESS",
+        "LinkedIn": "NO_RESULTS",
+        "Instagram": "NO_RESULTS",
         "WhatsApp": "SUCCESS",
-        "Google": "PROVIDER_ERROR"
+        "Email": "SUCCESS",
+        "Google": "NO_RESULTS"
       },
       "platform_metrics": {
         "YouTube": {
@@ -327,9 +286,25 @@
           "missing_required_contact": 0,
           "parody_or_gimmick": 0,
           "target_type_mismatches": 0,
+          "location_unverified": 0,
           "insufficient_identity_evidence": 0,
           "below_relevance_threshold": 0,
           "retained_candidates": 0,
+          "provider": "ddg",
+          "retry_count": 0
+        },
+        "X": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 1,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 1,
+          "location_unverified": 2,
+          "insufficient_identity_evidence": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 1,
           "provider": "ddg",
           "retry_count": 0
         },
@@ -341,67 +316,8 @@
           "missing_required_contact": 0,
           "parody_or_gimmick": 0,
           "target_type_mismatches": 1,
+          "location_unverified": 0,
           "insufficient_identity_evidence": 1,
-          "below_relevance_threshold": 0,
-          "retained_candidates": 0,
-          "provider": "ddg",
-          "retry_count": 0
-        },
-        "X": {
-          "search_status": "TIMEOUT",
-          "search_hits": 0,
-          "invalid_urls": 0,
-          "rejected_names": 0,
-          "missing_required_contact": 0,
-          "parody_or_gimmick": 0,
-          "target_type_mismatches": 0,
-          "insufficient_identity_evidence": 0,
-          "below_relevance_threshold": 0,
-          "retained_candidates": 0,
-          "provider": "ddg",
-          "exception_type": "TimeoutException",
-          "failure_reason": "timeout",
-          "retry_count": 1
-        },
-        "LinkedIn": {
-          "search_status": "SUCCESS",
-          "search_hits": 5,
-          "invalid_urls": 0,
-          "rejected_names": 0,
-          "missing_required_contact": 0,
-          "parody_or_gimmick": 0,
-          "target_type_mismatches": 0,
-          "insufficient_identity_evidence": 0,
-          "below_relevance_threshold": 0,
-          "retained_candidates": 5,
-          "provider": "ddg",
-          "retry_count": 1
-        },
-        "Instagram": {
-          "search_status": "PROVIDER_ERROR",
-          "search_hits": 0,
-          "invalid_urls": 0,
-          "rejected_names": 0,
-          "missing_required_contact": 0,
-          "parody_or_gimmick": 0,
-          "target_type_mismatches": 0,
-          "insufficient_identity_evidence": 0,
-          "below_relevance_threshold": 0,
-          "retained_candidates": 0,
-          "provider": "ddg",
-          "exception_type": "DDGSException",
-          "failure_reason": "ddgs_error",
-          "retry_count": 1
-        },
-        "Email": {
-          "search_status": "SUCCESS",
-          "search_hits": 5,
-          "invalid_urls": 0,
-          "rejected_names": 0,
-          "missing_required_contact": 5,
-          "parody_or_gimmick": 0,
-          "target_type_mismatches": 0,
-          "insufficient_identity_evidence": 0,
           "below_relevance_threshold": 0,
           "retained_candidates": 0,
           "provider": "ddg",
@@ -415,129 +331,7 @@
           "missing_required_contact": 0,
           "parody_or_gimmick": 0,
           "target_type_mismatches": 0,
-          "insufficient_identity_evidence": 0,
-          "below_relevance_threshold": 0,
-          "retained_candidates": 0,
-          "provider": "ddg",
-          "retry_count": 1
-        },
-        "WhatsApp": {
-          "search_status": "SUCCESS",
-          "search_hits": 5,
-          "invalid_urls": 0,
-          "rejected_names": 0,
-          "missing_required_contact": 5,
-          "parody_or_gimmick": 0,
-          "target_type_mismatches": 0,
-          "insufficient_identity_evidence": 0,
-          "below_relevance_threshold": 0,
-          "retained_candidates": 0,
-          "provider": "ddg",
-          "retry_count": 1
-        },
-        "Google": {
-          "search_status": "PROVIDER_ERROR",
-          "search_hits": 0,
-          "invalid_urls": 0,
-          "rejected_names": 0,
-          "missing_required_contact": 0,
-          "parody_or_gimmick": 0,
-          "target_type_mismatches": 0,
-          "insufficient_identity_evidence": 0,
-          "below_relevance_threshold": 0,
-          "retained_candidates": 0,
-          "provider": "ddg",
-          "exception_type": "DDGSException",
-          "failure_reason": "ddgs_error",
-          "retry_count": 1
-        }
-      }
-    },
-    "reconciliation": {
-      "sum_retained_candidates": 5,
-      "total_prospects_after_dedup": 5,
-      "social_profile_links_in_response": 5
-    }
-  },
-  {
-    "query": "Startup founders in London UK",
-    "http_status": 200,
-    "request_id": "0d225aa3-205c-4577-b816-ac0fde3cf059",
-    "telemetry_headers": {
-      "x-llm-provider": "heuristic_fallback",
-      "x-platforms-succeeded": "6",
-      "x-platforms-no-results": "0",
-      "x-platforms-failed": "3",
-      "x-ratelimit-limit": "30",
-      "x-ratelimit-remaining": "29",
-      "x-request-id": "0d225aa3-205c-4577-b816-ac0fde3cf059"
-    },
-    "strict_response": {
-      "success": true,
-      "query": "Startup founders in London UK",
-      "total_prospects": 2,
-      "prospects": [
-        {
-          "name": "Miguel Carranza",
-          "social_link": [
-            {
-              "platform": "X",
-              "link": "https://x.com/elwatto"
-            }
-          ]
-        },
-        {
-          "name": "Henning Sanden",
-          "social_link": [
-            {
-              "platform": "X",
-              "link": "https://x.com/henningsanden"
-            }
-          ]
-        }
-      ]
-    },
-    "provider_health": {
-      "llm_provider": "heuristic_fallback",
-      "platforms_succeeded": 6,
-      "platforms_no_results": 0,
-      "platforms_rate_limited": 0,
-      "platforms_timed_out": 2,
-      "platforms_errored": 1,
-      "platform_outcomes": {
-        "Instagram": "SUCCESS",
-        "YouTube": "SUCCESS",
-        "LinkedIn": "PROVIDER_ERROR",
-        "X": "SUCCESS",
-        "Facebook": "SUCCESS",
-        "Threads": "TIMEOUT",
-        "WhatsApp": "SUCCESS",
-        "Email": "SUCCESS",
-        "Google": "TIMEOUT"
-      },
-      "platform_metrics": {
-        "Instagram": {
-          "search_status": "SUCCESS",
-          "search_hits": 5,
-          "invalid_urls": 5,
-          "rejected_names": 0,
-          "missing_required_contact": 0,
-          "parody_or_gimmick": 0,
-          "target_type_mismatches": 0,
-          "insufficient_identity_evidence": 0,
-          "below_relevance_threshold": 0,
-          "retained_candidates": 0,
-          "provider": "ddg",
-          "retry_count": 0
-        },
-        "YouTube": {
-          "search_status": "SUCCESS",
-          "search_hits": 5,
-          "invalid_urls": 4,
-          "rejected_names": 0,
-          "missing_required_contact": 0,
-          "parody_or_gimmick": 0,
-          "target_type_mismatches": 1,
+          "location_unverified": 0,
           "insufficient_identity_evidence": 0,
           "below_relevance_threshold": 0,
           "retained_candidates": 0,
@@ -545,63 +339,37 @@
           "retry_count": 0
         },
         "LinkedIn": {
-          "search_status": "PROVIDER_ERROR",
+          "search_status": "NO_RESULTS",
           "search_hits": 0,
           "invalid_urls": 0,
           "rejected_names": 0,
           "missing_required_contact": 0,
           "parody_or_gimmick": 0,
           "target_type_mismatches": 0,
+          "location_unverified": 0,
           "insufficient_identity_evidence": 0,
           "below_relevance_threshold": 0,
           "retained_candidates": 0,
           "provider": "ddg",
           "exception_type": "DDGSException",
-          "failure_reason": "ddgs_error",
+          "failure_reason": "no_results_exception",
           "retry_count": 1
         },
-        "X": {
-          "search_status": "SUCCESS",
-          "search_hits": 5,
-          "invalid_urls": 1,
-          "rejected_names": 0,
-          "missing_required_contact": 0,
-          "parody_or_gimmick": 0,
-          "target_type_mismatches": 1,
-          "insufficient_identity_evidence": 1,
-          "below_relevance_threshold": 0,
-          "retained_candidates": 2,
-          "provider": "ddg",
-          "retry_count": 1
-        },
-        "Facebook": {
-          "search_status": "SUCCESS",
-          "search_hits": 5,
-          "invalid_urls": 2,
-          "rejected_names": 0,
-          "missing_required_contact": 0,
-          "parody_or_gimmick": 0,
-          "target_type_mismatches": 3,
-          "insufficient_identity_evidence": 0,
-          "below_relevance_threshold": 0,
-          "retained_candidates": 0,
-          "provider": "ddg",
-          "retry_count": 1
-        },
-        "Threads": {
-          "search_status": "TIMEOUT",
+        "Instagram": {
+          "search_status": "NO_RESULTS",
           "search_hits": 0,
           "invalid_urls": 0,
           "rejected_names": 0,
           "missing_required_contact": 0,
           "parody_or_gimmick": 0,
           "target_type_mismatches": 0,
+          "location_unverified": 0,
           "insufficient_identity_evidence": 0,
           "below_relevance_threshold": 0,
           "retained_candidates": 0,
           "provider": "ddg",
-          "exception_type": "TimeoutException",
-          "failure_reason": "timeout",
+          "exception_type": "DDGSException",
+          "failure_reason": "no_results_exception",
           "retry_count": 1
         },
         "WhatsApp": {
@@ -612,6 +380,7 @@
           "missing_required_contact": 5,
           "parody_or_gimmick": 0,
           "target_type_mismatches": 0,
+          "location_unverified": 0,
           "insufficient_identity_evidence": 0,
           "below_relevance_threshold": 0,
           "retained_candidates": 0,
@@ -626,6 +395,7 @@
           "missing_required_contact": 5,
           "parody_or_gimmick": 0,
           "target_type_mismatches": 0,
+          "location_unverified": 0,
           "insufficient_identity_evidence": 0,
           "below_relevance_threshold": 0,
           "retained_candidates": 0,
@@ -633,209 +403,20 @@
           "retry_count": 1
         },
         "Google": {
-          "search_status": "TIMEOUT",
+          "search_status": "NO_RESULTS",
           "search_hits": 0,
           "invalid_urls": 0,
           "rejected_names": 0,
           "missing_required_contact": 0,
           "parody_or_gimmick": 0,
           "target_type_mismatches": 0,
-          "insufficient_identity_evidence": 0,
-          "below_relevance_threshold": 0,
-          "retained_candidates": 0,
-          "provider": "ddg",
-          "exception_type": "TimeoutException",
-          "failure_reason": "timeout",
-          "retry_count": 1
-        }
-      }
-    },
-    "reconciliation": {
-      "sum_retained_candidates": 2,
-      "total_prospects_after_dedup": 2,
-      "social_profile_links_in_response": 2
-    }
-  },
-  {
-    "query": "Cricket lovers in Ahmedabad India",
-    "http_status": 200,
-    "request_id": "37d88bf6-f567-48f3-9605-d0f895d6a00c",
-    "telemetry_headers": {
-      "x-llm-provider": "heuristic_fallback",
-      "x-platforms-succeeded": "5",
-      "x-platforms-no-results": "0",
-      "x-platforms-failed": "4",
-      "x-ratelimit-limit": "30",
-      "x-ratelimit-remaining": "29",
-      "x-request-id": "37d88bf6-f567-48f3-9605-d0f895d6a00c"
-    },
-    "strict_response": {
-      "success": true,
-      "query": "Cricket lovers in Ahmedabad India",
-      "total_prospects": 1,
-      "prospects": [
-        {
-          "name": "amit kumar",
-          "social_link": [
-            {
-              "platform": "X",
-              "link": "https://x.com/Amit051099"
-            }
-          ]
-        }
-      ]
-    },
-    "provider_health": {
-      "llm_provider": "heuristic_fallback",
-      "platforms_succeeded": 5,
-      "platforms_no_results": 0,
-      "platforms_rate_limited": 0,
-      "platforms_timed_out": 2,
-      "platforms_errored": 2,
-      "platform_outcomes": {
-        "Instagram": "SUCCESS",
-        "YouTube": "SUCCESS",
-        "X": "SUCCESS",
-        "LinkedIn": "PROVIDER_ERROR",
-        "Facebook": "TIMEOUT",
-        "WhatsApp": "SUCCESS",
-        "Email": "SUCCESS",
-        "Threads": "TIMEOUT",
-        "Google": "PROVIDER_ERROR"
-      },
-      "platform_metrics": {
-        "Instagram": {
-          "search_status": "SUCCESS",
-          "search_hits": 5,
-          "invalid_urls": 5,
-          "rejected_names": 0,
-          "missing_required_contact": 0,
-          "parody_or_gimmick": 0,
-          "target_type_mismatches": 0,
-          "insufficient_identity_evidence": 0,
-          "below_relevance_threshold": 0,
-          "retained_candidates": 0,
-          "provider": "ddg",
-          "retry_count": 0
-        },
-        "YouTube": {
-          "search_status": "SUCCESS",
-          "search_hits": 5,
-          "invalid_urls": 5,
-          "rejected_names": 0,
-          "missing_required_contact": 0,
-          "parody_or_gimmick": 0,
-          "target_type_mismatches": 0,
-          "insufficient_identity_evidence": 0,
-          "below_relevance_threshold": 0,
-          "retained_candidates": 0,
-          "provider": "ddg",
-          "retry_count": 1
-        },
-        "X": {
-          "search_status": "SUCCESS",
-          "search_hits": 5,
-          "invalid_urls": 0,
-          "rejected_names": 0,
-          "missing_required_contact": 0,
-          "parody_or_gimmick": 1,
-          "target_type_mismatches": 0,
-          "insufficient_identity_evidence": 2,
-          "below_relevance_threshold": 1,
-          "retained_candidates": 1,
-          "provider": "ddg",
-          "retry_count": 1
-        },
-        "LinkedIn": {
-          "search_status": "PROVIDER_ERROR",
-          "search_hits": 0,
-          "invalid_urls": 0,
-          "rejected_names": 0,
-          "missing_required_contact": 0,
-          "parody_or_gimmick": 0,
-          "target_type_mismatches": 0,
+          "location_unverified": 0,
           "insufficient_identity_evidence": 0,
           "below_relevance_threshold": 0,
           "retained_candidates": 0,
           "provider": "ddg",
           "exception_type": "DDGSException",
-          "failure_reason": "ddgs_error",
-          "retry_count": 1
-        },
-        "Facebook": {
-          "search_status": "TIMEOUT",
-          "search_hits": 0,
-          "invalid_urls": 0,
-          "rejected_names": 0,
-          "missing_required_contact": 0,
-          "parody_or_gimmick": 0,
-          "target_type_mismatches": 0,
-          "insufficient_identity_evidence": 0,
-          "below_relevance_threshold": 0,
-          "retained_candidates": 0,
-          "provider": "ddg",
-          "exception_type": "TimeoutException",
-          "failure_reason": "timeout",
-          "retry_count": 1
-        },
-        "WhatsApp": {
-          "search_status": "SUCCESS",
-          "search_hits": 5,
-          "invalid_urls": 0,
-          "rejected_names": 0,
-          "missing_required_contact": 5,
-          "parody_or_gimmick": 0,
-          "target_type_mismatches": 0,
-          "insufficient_identity_evidence": 0,
-          "below_relevance_threshold": 0,
-          "retained_candidates": 0,
-          "provider": "ddg",
-          "retry_count": 1
-        },
-        "Email": {
-          "search_status": "SUCCESS",
-          "search_hits": 5,
-          "invalid_urls": 1,
-          "rejected_names": 0,
-          "missing_required_contact": 4,
-          "parody_or_gimmick": 0,
-          "target_type_mismatches": 0,
-          "insufficient_identity_evidence": 0,
-          "below_relevance_threshold": 0,
-          "retained_candidates": 0,
-          "provider": "ddg",
-          "retry_count": 1
-        },
-        "Threads": {
-          "search_status": "TIMEOUT",
-          "search_hits": 0,
-          "invalid_urls": 0,
-          "rejected_names": 0,
-          "missing_required_contact": 0,
-          "parody_or_gimmick": 0,
-          "target_type_mismatches": 0,
-          "insufficient_identity_evidence": 0,
-          "below_relevance_threshold": 0,
-          "retained_candidates": 0,
-          "provider": "ddg",
-          "exception_type": "TimeoutException",
-          "failure_reason": "timeout",
-          "retry_count": 1
-        },
-        "Google": {
-          "search_status": "PROVIDER_ERROR",
-          "search_hits": 0,
-          "invalid_urls": 0,
-          "rejected_names": 0,
-          "missing_required_contact": 0,
-          "parody_or_gimmick": 0,
-          "target_type_mismatches": 0,
-          "insufficient_identity_evidence": 0,
-          "below_relevance_threshold": 0,
-          "retained_candidates": 0,
-          "provider": "ddg",
-          "exception_type": "DDGSException",
-          "failure_reason": "ddgs_error",
+          "failure_reason": "no_results_exception",
           "retry_count": 1
         }
       }
@@ -847,30 +428,484 @@
     }
   },
   {
+    "query": "Startup founders in London UK",
+    "http_status": 200,
+    "request_id": "08096497-ec8f-4cb4-9ae8-efb4eaa40ba7",
+    "telemetry_headers": {
+      "x-llm-provider": "heuristic_fallback",
+      "x-platforms-succeeded": "7",
+      "x-platforms-no-results": "2",
+      "x-platforms-failed": "0",
+      "x-ratelimit-limit": "30",
+      "x-ratelimit-remaining": "29",
+      "x-request-id": "08096497-ec8f-4cb4-9ae8-efb4eaa40ba7"
+    },
+    "strict_response": {
+      "success": true,
+      "query": "Startup founders in London UK",
+      "total_prospects": 4,
+      "prospects": [
+        {
+          "name": "Charlie Walker",
+          "location": "London, UK",
+          "social_link": [
+            {
+              "platform": "LinkedIn",
+              "link": "https://www.linkedin.com/in/charlie-walker-846184112"
+            }
+          ]
+        },
+        {
+          "name": "Rahim Nathwani",
+          "location": "London, UK",
+          "social_link": [
+            {
+              "platform": "LinkedIn",
+              "link": "https://www.linkedin.com/in/rahimnathwani"
+            }
+          ]
+        },
+        {
+          "name": "Peter Elstrom",
+          "location": "London, UK",
+          "social_link": [
+            {
+              "platform": "LinkedIn",
+              "link": "https://www.linkedin.com/in/peter-elstrom-a4a6483"
+            }
+          ]
+        },
+        {
+          "name": "Yashvardhan Rana",
+          "location": "London",
+          "social_link": [
+            {
+              "platform": "LinkedIn",
+              "link": "https://www.linkedin.com/in/yashvardhanrana"
+            }
+          ]
+        }
+      ]
+    },
+    "provider_health": {
+      "llm_provider": "heuristic_fallback",
+      "platforms_succeeded": 7,
+      "platforms_no_results": 2,
+      "platforms_rate_limited": 0,
+      "platforms_timed_out": 0,
+      "platforms_errored": 0,
+      "platform_outcomes": {
+        "Instagram": "SUCCESS",
+        "LinkedIn": "SUCCESS",
+        "X": "SUCCESS",
+        "WhatsApp": "SUCCESS",
+        "Facebook": "SUCCESS",
+        "YouTube": "SUCCESS",
+        "Threads": "NO_RESULTS",
+        "Google": "SUCCESS",
+        "Email": "NO_RESULTS"
+      },
+      "platform_metrics": {
+        "Instagram": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 5,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "location_unverified": 0,
+          "insufficient_identity_evidence": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0,
+          "provider": "ddg",
+          "retry_count": 0
+        },
+        "LinkedIn": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "location_unverified": 0,
+          "insufficient_identity_evidence": 0,
+          "below_relevance_threshold": 1,
+          "retained_candidates": 4,
+          "provider": "ddg",
+          "retry_count": 0
+        },
+        "X": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 1,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 1,
+          "location_unverified": 3,
+          "insufficient_identity_evidence": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0,
+          "provider": "ddg",
+          "retry_count": 0
+        },
+        "WhatsApp": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 5,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "location_unverified": 0,
+          "insufficient_identity_evidence": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0,
+          "provider": "ddg",
+          "retry_count": 0
+        },
+        "Facebook": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 1,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 4,
+          "location_unverified": 0,
+          "insufficient_identity_evidence": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0,
+          "provider": "ddg",
+          "retry_count": 1
+        },
+        "YouTube": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 4,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 1,
+          "location_unverified": 0,
+          "insufficient_identity_evidence": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0,
+          "provider": "ddg",
+          "retry_count": 1
+        },
+        "Threads": {
+          "search_status": "NO_RESULTS",
+          "search_hits": 0,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "location_unverified": 0,
+          "insufficient_identity_evidence": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0,
+          "provider": "ddg",
+          "exception_type": "DDGSException",
+          "failure_reason": "no_results_exception",
+          "retry_count": 1
+        },
+        "Google": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 2,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 3,
+          "location_unverified": 0,
+          "insufficient_identity_evidence": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0,
+          "provider": "ddg",
+          "retry_count": 0
+        },
+        "Email": {
+          "search_status": "NO_RESULTS",
+          "search_hits": 0,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "location_unverified": 0,
+          "insufficient_identity_evidence": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0,
+          "provider": "ddg",
+          "exception_type": "DDGSException",
+          "failure_reason": "no_results_exception",
+          "retry_count": 1
+        }
+      }
+    },
+    "reconciliation": {
+      "sum_retained_candidates": 4,
+      "total_prospects_after_dedup": 4,
+      "social_profile_links_in_response": 4
+    }
+  },
+  {
+    "query": "Cricket lovers in Ahmedabad India",
+    "http_status": 200,
+    "request_id": "1df76880-84a6-4e4b-8728-4114f5664486",
+    "telemetry_headers": {
+      "x-llm-provider": "heuristic_fallback",
+      "x-platforms-succeeded": "6",
+      "x-platforms-no-results": "3",
+      "x-platforms-failed": "0",
+      "x-ratelimit-limit": "30",
+      "x-ratelimit-remaining": "29",
+      "x-request-id": "1df76880-84a6-4e4b-8728-4114f5664486"
+    },
+    "strict_response": {
+      "success": true,
+      "query": "Cricket lovers in Ahmedabad India",
+      "total_prospects": 4,
+      "prospects": [
+        {
+          "name": "Abhishek Raj",
+          "location": "Ahmedabad",
+          "social_link": [
+            {
+              "platform": "LinkedIn",
+              "link": "https://www.linkedin.com/in/abhishek-raj-ab978895"
+            }
+          ]
+        },
+        {
+          "name": "Dr.Rupesh Vala",
+          "location": "Ahmedabad",
+          "social_link": [
+            {
+              "platform": "LinkedIn",
+              "link": "https://www.linkedin.com/in/dr-rupesh-vala-3b896417"
+            }
+          ]
+        },
+        {
+          "name": "Jigar Jokhakar",
+          "location": "Ahmedabad",
+          "social_link": [
+            {
+              "platform": "LinkedIn",
+              "link": "https://www.linkedin.com/in/jigarjokhakar"
+            }
+          ]
+        },
+        {
+          "name": "Dhruvesh Patel",
+          "location": "Ahmedabad",
+          "social_link": [
+            {
+              "platform": "LinkedIn",
+              "link": "https://www.linkedin.com/in/dhruvesh-patel-210794"
+            }
+          ]
+        }
+      ]
+    },
+    "provider_health": {
+      "llm_provider": "heuristic_fallback",
+      "platforms_succeeded": 6,
+      "platforms_no_results": 3,
+      "platforms_rate_limited": 0,
+      "platforms_timed_out": 0,
+      "platforms_errored": 0,
+      "platform_outcomes": {
+        "LinkedIn": "SUCCESS",
+        "Instagram": "SUCCESS",
+        "Facebook": "SUCCESS",
+        "YouTube": "SUCCESS",
+        "WhatsApp": "SUCCESS",
+        "Email": "SUCCESS",
+        "X": "NO_RESULTS",
+        "Threads": "NO_RESULTS",
+        "Google": "NO_RESULTS"
+      },
+      "platform_metrics": {
+        "LinkedIn": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "location_unverified": 1,
+          "insufficient_identity_evidence": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 4,
+          "provider": "ddg",
+          "retry_count": 0
+        },
+        "Instagram": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 5,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "location_unverified": 0,
+          "insufficient_identity_evidence": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0,
+          "provider": "ddg",
+          "retry_count": 0
+        },
+        "Facebook": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 5,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "location_unverified": 0,
+          "insufficient_identity_evidence": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0,
+          "provider": "ddg",
+          "retry_count": 0
+        },
+        "YouTube": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 5,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "location_unverified": 0,
+          "insufficient_identity_evidence": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0,
+          "provider": "ddg",
+          "retry_count": 1
+        },
+        "WhatsApp": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 5,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "location_unverified": 0,
+          "insufficient_identity_evidence": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0,
+          "provider": "ddg",
+          "retry_count": 0
+        },
+        "Email": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 1,
+          "rejected_names": 0,
+          "missing_required_contact": 4,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "location_unverified": 0,
+          "insufficient_identity_evidence": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0,
+          "provider": "ddg",
+          "retry_count": 0
+        },
+        "X": {
+          "search_status": "NO_RESULTS",
+          "search_hits": 0,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "location_unverified": 0,
+          "insufficient_identity_evidence": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0,
+          "provider": "ddg",
+          "exception_type": "DDGSException",
+          "failure_reason": "no_results_exception",
+          "retry_count": 1
+        },
+        "Threads": {
+          "search_status": "NO_RESULTS",
+          "search_hits": 0,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "location_unverified": 0,
+          "insufficient_identity_evidence": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0,
+          "provider": "ddg",
+          "exception_type": "DDGSException",
+          "failure_reason": "no_results_exception",
+          "retry_count": 1
+        },
+        "Google": {
+          "search_status": "NO_RESULTS",
+          "search_hits": 0,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "location_unverified": 0,
+          "insufficient_identity_evidence": 0,
+          "below_relevance_threshold": 0,
+          "retained_candidates": 0,
+          "provider": "ddg",
+          "exception_type": "DDGSException",
+          "failure_reason": "no_results_exception",
+          "retry_count": 1
+        }
+      }
+    },
+    "reconciliation": {
+      "sum_retained_candidates": 4,
+      "total_prospects_after_dedup": 4,
+      "social_profile_links_in_response": 4
+    }
+  },
+  {
     "query": "Restaurant owners in Dubai UAE",
     "http_status": 200,
-    "request_id": "af4e49ee-a117-4ac4-b8b8-2be1e5e639a8",
+    "request_id": "2faaaa80-e7b8-4c65-901f-b23a3982aa0e",
     "telemetry_headers": {
       "x-llm-provider": "heuristic_fallback",
       "x-platforms-succeeded": "8",
-      "x-platforms-no-results": "0",
-      "x-platforms-failed": "1",
+      "x-platforms-no-results": "1",
+      "x-platforms-failed": "0",
       "x-ratelimit-limit": "30",
       "x-ratelimit-remaining": "29",
-      "x-request-id": "af4e49ee-a117-4ac4-b8b8-2be1e5e639a8"
+      "x-request-id": "2faaaa80-e7b8-4c65-901f-b23a3982aa0e"
     },
     "strict_response": {
       "success": true,
       "query": "Restaurant owners in Dubai UAE",
-      "total_prospects": 4,
+      "total_prospects": 3,
       "prospects": [
         {
-          "name": "Samer Mustaklim",
+          "name": "Mohamed Al Fayed",
           "location": "Dubai, UAE",
           "social_link": [
             {
               "platform": "LinkedIn",
-              "link": "https://www.linkedin.com/in/samer-mustaklim-048837109"
+              "link": "https://www.linkedin.com/in/moefayed"
             }
           ]
         },
@@ -893,36 +928,26 @@
               "link": "https://www.facebook.com/mrchefsubra.uae"
             }
           ]
-        },
-        {
-          "name": "Mitul Pandya",
-          "location": "Dubai",
-          "social_link": [
-            {
-              "platform": "LinkedIn",
-              "link": "https://www.linkedin.com/in/founderofcharterwells"
-            }
-          ]
         }
       ]
     },
     "provider_health": {
       "llm_provider": "heuristic_fallback",
       "platforms_succeeded": 8,
-      "platforms_no_results": 0,
+      "platforms_no_results": 1,
       "platforms_rate_limited": 0,
       "platforms_timed_out": 0,
-      "platforms_errored": 1,
+      "platforms_errored": 0,
       "platform_outcomes": {
         "Instagram": "SUCCESS",
-        "Facebook": "SUCCESS",
         "LinkedIn": "SUCCESS",
         "X": "SUCCESS",
-        "Threads": "SUCCESS",
-        "Google": "SUCCESS",
-        "YouTube": "PROVIDER_ERROR",
+        "Facebook": "SUCCESS",
         "WhatsApp": "SUCCESS",
-        "Email": "SUCCESS"
+        "Email": "SUCCESS",
+        "Google": "SUCCESS",
+        "YouTube": "NO_RESULTS",
+        "Threads": "SUCCESS"
       },
       "platform_metrics": {
         "Instagram": {
@@ -933,8 +958,39 @@
           "missing_required_contact": 0,
           "parody_or_gimmick": 0,
           "target_type_mismatches": 0,
+          "location_unverified": 0,
           "insufficient_identity_evidence": 0,
           "below_relevance_threshold": 0,
+          "retained_candidates": 0,
+          "provider": "ddg",
+          "retry_count": 0
+        },
+        "LinkedIn": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "location_unverified": 1,
+          "insufficient_identity_evidence": 0,
+          "below_relevance_threshold": 2,
+          "retained_candidates": 2,
+          "provider": "ddg",
+          "retry_count": 0
+        },
+        "X": {
+          "search_status": "SUCCESS",
+          "search_hits": 5,
+          "invalid_urls": 0,
+          "rejected_names": 0,
+          "missing_required_contact": 0,
+          "parody_or_gimmick": 0,
+          "target_type_mismatches": 0,
+          "location_unverified": 2,
+          "insufficient_identity_evidence": 2,
+          "below_relevance_threshold": 1,
           "retained_candidates": 0,
           "provider": "ddg",
           "retry_count": 0
@@ -947,48 +1003,37 @@
           "missing_required_contact": 0,
           "parody_or_gimmick": 0,
           "target_type_mismatches": 0,
+          "location_unverified": 0,
           "insufficient_identity_evidence": 0,
           "below_relevance_threshold": 0,
           "retained_candidates": 1,
           "provider": "ddg",
           "retry_count": 0
         },
-        "LinkedIn": {
+        "WhatsApp": {
           "search_status": "SUCCESS",
           "search_hits": 5,
           "invalid_urls": 0,
           "rejected_names": 0,
-          "missing_required_contact": 0,
+          "missing_required_contact": 5,
           "parody_or_gimmick": 0,
           "target_type_mismatches": 0,
+          "location_unverified": 0,
           "insufficient_identity_evidence": 0,
-          "below_relevance_threshold": 2,
-          "retained_candidates": 3,
-          "provider": "ddg",
-          "retry_count": 0
-        },
-        "X": {
-          "search_status": "SUCCESS",
-          "search_hits": 5,
-          "invalid_urls": 0,
-          "rejected_names": 0,
-          "missing_required_contact": 0,
-          "parody_or_gimmick": 0,
-          "target_type_mismatches": 0,
-          "insufficient_identity_evidence": 5,
           "below_relevance_threshold": 0,
           "retained_candidates": 0,
           "provider": "ddg",
-          "retry_count": 1
+          "retry_count": 0
         },
-        "Threads": {
+        "Email": {
           "search_status": "SUCCESS",
-          "search_hits": 2,
-          "invalid_urls": 2,
+          "search_hits": 5,
+          "invalid_urls": 0,
           "rejected_names": 0,
-          "missing_required_contact": 0,
+          "missing_required_contact": 5,
           "parody_or_gimmick": 0,
           "target_type_mismatches": 0,
+          "location_unverified": 0,
           "insufficient_identity_evidence": 0,
           "below_relevance_threshold": 0,
           "retained_candidates": 0,
@@ -1003,6 +1048,7 @@
           "missing_required_contact": 0,
           "parody_or_gimmick": 0,
           "target_type_mismatches": 3,
+          "location_unverified": 0,
           "insufficient_identity_evidence": 0,
           "below_relevance_threshold": 0,
           "retained_candidates": 0,
@@ -1010,43 +1056,31 @@
           "retry_count": 0
         },
         "YouTube": {
-          "search_status": "PROVIDER_ERROR",
+          "search_status": "NO_RESULTS",
           "search_hits": 0,
           "invalid_urls": 0,
           "rejected_names": 0,
           "missing_required_contact": 0,
           "parody_or_gimmick": 0,
           "target_type_mismatches": 0,
+          "location_unverified": 0,
           "insufficient_identity_evidence": 0,
           "below_relevance_threshold": 0,
           "retained_candidates": 0,
           "provider": "ddg",
           "exception_type": "DDGSException",
-          "failure_reason": "ddgs_error",
+          "failure_reason": "no_results_exception",
           "retry_count": 1
         },
-        "WhatsApp": {
+        "Threads": {
           "search_status": "SUCCESS",
-          "search_hits": 5,
-          "invalid_urls": 0,
+          "search_hits": 2,
+          "invalid_urls": 2,
           "rejected_names": 0,
-          "missing_required_contact": 5,
+          "missing_required_contact": 0,
           "parody_or_gimmick": 0,
           "target_type_mismatches": 0,
-          "insufficient_identity_evidence": 0,
-          "below_relevance_threshold": 0,
-          "retained_candidates": 0,
-          "provider": "ddg",
-          "retry_count": 1
-        },
-        "Email": {
-          "search_status": "SUCCESS",
-          "search_hits": 5,
-          "invalid_urls": 0,
-          "rejected_names": 0,
-          "missing_required_contact": 5,
-          "parody_or_gimmick": 0,
-          "target_type_mismatches": 0,
+          "location_unverified": 0,
           "insufficient_identity_evidence": 0,
           "below_relevance_threshold": 0,
           "retained_candidates": 0,
@@ -1056,9 +1090,9 @@
       }
     },
     "reconciliation": {
-      "sum_retained_candidates": 4,
-      "total_prospects_after_dedup": 4,
-      "social_profile_links_in_response": 4
+      "sum_retained_candidates": 3,
+      "total_prospects_after_dedup": 3,
+      "social_profile_links_in_response": 3
     }
   }
 ]

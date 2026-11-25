@@ -259,8 +259,30 @@ _PERSON_ROLE_RE = re.compile(
 )
 
 
+_NON_PERSONAL_NAME_TOKENS = frozenset(
+    {
+        "gridiron", "football", "cricket", "soccer", "sports", "startup", "startups",
+        "founder", "founders", "marketing", "digital", "agency", "ventures", "capital",
+        "london", "dubai", "ahmedabad", "york", "washington", "daily", "updates",
+        "official", "channel", "podcast", "digest", "insider", "live", "eats",
+        "kitchen", "food", "media", "studio", "studios", "roi", "local", "hub",
+    }
+)
+
+_BRAND_PLACE_TOKENS = (
+    "dc", "nyc", "la", "sf", "uk", "usa", "uae",
+    "london", "dubai", "new york", "washington", "ahmedabad",
+)
+
+_BRAND_TOPIC_RE = re.compile(
+    r"\b(?:gridiron|football|cricket|soccer|sports?|startups?|founders?|"
+    r"marketing|digital|eats|food|kitchen|updates|daily|weekly|tv|podcast|hub)\b",
+    re.IGNORECASE,
+)
+
+
 def _handle_corroborates_name(name: str, platform: str, profile_url: str) -> bool:
-    """Return True when the URL handle strongly echoes tokens of `name`."""
+    """Return True only when the URL handle strongly echoes full personal name tokens."""
     handle = extract_handle(profile_url, platform) or ""
     handle_clean = re.sub(r"[^a-z0-9]", "", handle.lower())
     if len(handle_clean) < 4:
@@ -269,9 +291,19 @@ def _handle_corroborates_name(name: str, platform: str, profile_url: str) -> boo
     name_tokens = [tok for tok in name_tokens if len(tok) >= 2]
     if len(name_tokens) < 2:
         return False
-    # Check full surname OR >=2 name tokens inside handle (e.g. john+doe -> johndoe, a.b.+dharmadhikari)
-    matched = sum(1 for tok in name_tokens if len(tok) >= 3 and tok in handle_clean)
-    return matched >= 2 or (len(name_tokens[-1]) >= 6 and name_tokens[-1] in handle_clean)
+    # Never let topical/place words count toward personal identity corroboration
+    personal_tokens = [t for t in name_tokens if t not in _NON_PERSONAL_NAME_TOKENS]
+    if len(personal_tokens) < 2:
+        return False
+    matched = sum(1 for tok in personal_tokens if len(tok) >= 3 and tok in handle_clean)
+    if matched >= 2:
+        return True
+    first, last = personal_tokens[0], personal_tokens[-1]
+    return (
+        len(last) >= 4
+        and handle_clean.startswith(first[0])
+        and last in handle_clean
+    )
 
 
 def classify_candidate_entity(
@@ -316,6 +348,13 @@ def classify_candidate_entity(
         n_words = n_clean.split()
         # Trailing uppercase business acronym like "Main Street ROI", "Apex PPC", "Acme B2B"
         if len(n_words) >= 2 and re.match(r"^[A-Z]{2,5}$", n_words[-1]) and n_words[-1] not in {"UK", "USA", "UAE", "CEO", "CTO", "MD"}:
+            return "business"
+        # Place/abbreviation + topical channel names (e.g., "Dc Gridiron", "NYC Startups", "Dubai Eats")
+        if (
+            any(location_matches_text(pt, n_clean) for pt in _BRAND_PLACE_TOKENS)
+            and _BRAND_TOPIC_RE.search(n_clean)
+            and not _PERSON_ROLE_RE.search(n_clean)
+        ):
             return "business"
         # First-person / institutional org copy in title or snippet without personal LinkedIn URL
         if _ORG_CONTEXT_RE.search(combined_context) and not re.search(

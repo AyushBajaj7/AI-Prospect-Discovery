@@ -265,6 +265,19 @@ class RelevanceService:
                     )
                     continue
 
+            if (intent.location.city or intent.location.country) and (
+                breakdown.get("location_match", 0.0) <= 0.0 and not cand.location
+            ):
+                if m is not None:
+                    m.location_unverified += 1
+                logger.info(
+                    "Platform %s rejected '%s' [reason=location_unverified query=%r]",
+                    cand.platform,
+                    cand.name,
+                    intent.location.formatted(),
+                )
+                continue
+
             if not self._passes_identity_gate(cand, intent, breakdown):
                 if m is not None:
                     m.insufficient_identity_evidence += 1

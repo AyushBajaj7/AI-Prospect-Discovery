@@ -1300,6 +1300,7 @@ class TestP0ThroughP3Remediation:
         from openai import AsyncOpenAI
 
         req_text = (Path(__file__).resolve().parent.parent / "requirements.txt").read_text()
+        assert "fastapi>=0.115.6" in req_text
         assert "anthropic>=0.77.0" in req_text
         assert "google-genai>=1.60.0" in req_text
         assert "httpx>=0.28.1" in req_text
@@ -2131,7 +2132,67 @@ class TestAuditRemediationAndObservability:
             asyncio.run(llm_service._call_openai("Startup founders in London UK", 5.0))
         assert len(calls) == 1
 
-    def test_confirmed_conflicting_location_rejected(self):
+    def test_dc_gridiron_and_topic_channel_rejected_on_individual_queries(self, monkeypatch):
+        from app.services.search_service import search_service
+        from app.utils.normalizers import _handle_corroborates_name
+
+        assert not _handle_corroborates_name("Dc Gridiron", "YouTube", "https://www.youtube.com/@dcgridiron")
+        assert _handle_corroborates_name("Alex Morgan", "X", "https://x.com/alexmorgan")
+        assert (
+            classify_candidate_entity(
+                "Dc Gridiron",
+                "YouTube",
+                "https://www.youtube.com/@dcgridiron",
+                "Dc Gridiron - YouTube",
+                "Washington DC football highlights",
+            )
+            == "business"
+        )
+
+        RateLimitMiddleware.reset()
+        query_service.clear_cache()
+
+        async def mock_dc(query_str: str, num_results: int = 5):
+            if "youtube.com" in query_str:
+                return SearchOutcome(
+                    hits=[
+                        {
+                            "title": "Dc Gridiron - YouTube",
+                            "link": "https://www.youtube.com/@dcgridiron",
+                            "snippet": "Football lovers in Washington DC, USA.",
+                        }
+                    ],
+                    status=SearchStatus.SUCCESS,
+                    provider="ddg",
+                )
+            if "linkedin.com" in query_str:
+                return SearchOutcome(
+                    hits=[
+                        {
+                            "title": "Dan Sreebny | LinkedIn",
+                            "link": "https://www.linkedin.com/in/dan-sreebny-06b57718",
+                            "snippet": "Football lover in Washington DC, District of Columbia.",
+                        }
+                    ],
+                    status=SearchStatus.SUCCESS,
+                    provider="ddg",
+                )
+            return SearchOutcome(hits=[], status=SearchStatus.NO_RESULTS, provider="ddg")
+
+        monkeypatch.setattr(search_service, "search_with_status", mock_dc)
+        resp = client.post(
+            "/prospect-discovery?include_diagnostics=true",
+            json={"query": "Football lovers in Washington DC in USA"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert [p["name"] for p in body["prospects"]] == ["Dan Sreebny"]
+        assert body["provider_health"]["platform_metrics"]["YouTube"]["target_type_mismatches"] == 1
+
+    def test_unverified_and_conflicting_locations_rejected(self, monkeypatch):
+        from app.services.search_service import search_service
+
+        # 1. Explicit conflicting city/country rejected
         intent_dubai = StructuredIntent(
             interest="Restaurants",
             audience="Restaurant owners",
@@ -2156,10 +2217,51 @@ class TestAuditRemediationAndObservability:
             snippet="Restaurant owner in Dubai, UAE.",
             entity_type="individual",
         )
-        kept = relevance_service.filter_relevant_candidates(
-            [manchester_cand, dubai_cand], intent_dubai
+        assert [
+            c.name
+            for c in relevance_service.filter_relevant_candidates(
+                [manchester_cand, dubai_cand], intent_dubai
+            )
+        ] == ["Vince Farahjian"]
+
+        # 2. Candidate without ANY location confirmation rejected on city query
+        RateLimitMiddleware.reset()
+        query_service.clear_cache()
+
+        async def mock_london(query_str: str, num_results: int = 5):
+            if "x.com" in query_str:
+                return SearchOutcome(
+                    hits=[
+                        {
+                            "title": "Miguel Carranza (@elwatto) / X",
+                            "link": "https://x.com/elwatto",
+                            "snippet": "Startup founder sharing SaaS tips.",
+                        },
+                        {
+                            "title": "Henning Sanden (@henningsanden) / X",
+                            "link": "https://x.com/henningsanden",
+                            "snippet": "Startup founder based in London.",
+                        },
+                    ],
+                    status=SearchStatus.SUCCESS,
+                    provider="ddg",
+                )
+            return SearchOutcome(hits=[], status=SearchStatus.NO_RESULTS, provider="ddg")
+
+        monkeypatch.setattr(search_service, "search_with_status", mock_london)
+        resp = client.post(
+            "/prospect-discovery?include_diagnostics=true",
+            json={"query": "Startup founders in London UK"},
         )
-        assert [c.name for c in kept] == ["Vince Farahjian"]
+        assert resp.status_code == 200
+        body = resp.json()
+        assert [p["name"] for p in body["prospects"]] == ["Henning Sanden"]
+        assert body["provider_health"]["platform_metrics"]["X"]["location_unverified"] == 1
+
+    def test_default_config_host_binds_loopback(self):
+        from app.config import Settings
+
+        assert Settings(_env_file=None).HOST == "127.0.0.1"
 
 
 
